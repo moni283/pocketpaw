@@ -658,5 +658,101 @@ input:checked + .slider:before { transform: translateX(20px); }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 99px; border: 3px solid transparent; background-clip: content-box; }
 ::-webkit-scrollbar-thumb:hover { background-color: rgba(255,255,255,0.25); }
 
+/* =====================================================
+   Intentions
+   ===================================================== */
+.intention-input {
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  color: white;
+  font-size: 14px;
+  transition: all 0.2s;
+  width: 100%;
+}
+
+.intention-input:focus {
+  outline: none;
+  border-color: var(--accent-color);
+  background: rgba(0,0,0,0.4);
+}
+
+textarea.intention-input {
+  resize: vertical;
+  min-height: 60px;
+  font-family: inherit;
+}
+
+.intention-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 350px;
+  overflow-y: auto;
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  background: rgba(0,0,0,0.2);
+}
+
+.intention-item {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--glass-border);
+  transition: all 0.2s;
+}
+
+.intention-item:last-child {
+  border-bottom: none;
+}
+
+.intention-item:hover {
+  background: rgba(255,255,255,0.03);
+}
+
+.intention-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s;
+}
+
+.intention-toggle:hover {
+  transform: scale(1.1);
+}
+
+.btn-primary {
+  background: var(--accent-color);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  padding: 12px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.btn-primary:hover {
+  background: var(--accent-hover);
+}
+
+.btn-primary:active {
+  transform: scale(0.98);
+}
+
+.btn-primary:disabled {
+  background: #444;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 /* Utilities */
 [x-cloak] { display: none !important; }

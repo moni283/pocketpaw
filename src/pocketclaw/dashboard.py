@@ -18,6 +18,7 @@ from pocketclaw.config import Settings
 from pocketclaw.llm.router import LLMRouter
 from pocketclaw.agents.router import AgentRouter
 from pocketclaw.scheduler import get_scheduler
+from pocketclaw.daemon import get_daemon
 
 logger = logging.getLogger(__name__)
 
@@ -60,17 +61,44 @@ async def broadcast_reminder(reminder: dict):
                 active_connections.remove(ws)
 
 
+async def broadcast_intention(intention_id: str, chunk: dict):
+    """Broadcast intention execution results to all connected clients."""
+    message = {
+        "type": "intention_event",
+        "intention_id": intention_id,
+        **chunk
+    }
+    for ws in active_connections[:]:
+        try:
+            await ws.send_json(message)
+        except Exception:
+            if ws in active_connections:
+                active_connections.remove(ws)
+
+
 @app.on_event("startup")
 async def startup_event():
-    """Start the scheduler on app startup."""
+    """Start the scheduler and daemon on app startup."""
+    # Start reminder scheduler
     scheduler = get_scheduler()
     scheduler.start(callback=broadcast_reminder)
     logger.info("Reminder scheduler started")
 
+    # Start proactive daemon
+    daemon = get_daemon()
+    daemon.start(stream_callback=broadcast_intention)
+    logger.info("Proactive daemon started")
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Stop the scheduler on app shutdown."""
+    """Stop the scheduler and daemon on app shutdown."""
+    # Stop proactive daemon
+    daemon = get_daemon()
+    daemon.stop()
+    logger.info("Proactive daemon stopped")
+
+    # Stop reminder scheduler
     scheduler = get_scheduler()
     scheduler.stop()
     logger.info("Reminder scheduler stopped")
@@ -250,6 +278,98 @@ async def websocket_endpoint(websocket: WebSocket):
                     await websocket.send_json({
                         "type": "error",
                         "content": "Reminder not found"
+                    })
+
+            # ==================== Intentions API ====================
+
+            elif action == "get_intentions":
+                daemon = get_daemon()
+                intentions = daemon.get_intentions()
+                await websocket.send_json({
+                    "type": "intentions",
+                    "intentions": intentions
+                })
+
+            elif action == "create_intention":
+                daemon = get_daemon()
+                try:
+                    intention = daemon.create_intention(
+                        name=data.get("name", "Unnamed"),
+                        prompt=data.get("prompt", ""),
+                        trigger=data.get("trigger", {"type": "cron", "schedule": "0 9 * * *"}),
+                        context_sources=data.get("context_sources", []),
+                        enabled=data.get("enabled", True)
+                    )
+                    await websocket.send_json({
+                        "type": "intention_created",
+                        "intention": intention
+                    })
+                except Exception as e:
+                    await websocket.send_json({
+                        "type": "error",
+                        "content": f"Failed to create intention: {e}"
+                    })
+
+            elif action == "update_intention":
+                daemon = get_daemon()
+                intention_id = data.get("id", "")
+                updates = data.get("updates", {})
+                intention = daemon.update_intention(intention_id, updates)
+                if intention:
+                    await websocket.send_json({
+                        "type": "intention_updated",
+                        "intention": intention
+                    })
+                else:
+                    await websocket.send_json({
+                        "type": "error",
+                        "content": "Intention not found"
+                    })
+
+            elif action == "delete_intention":
+                daemon = get_daemon()
+                intention_id = data.get("id", "")
+                if daemon.delete_intention(intention_id):
+                    await websocket.send_json({
+                        "type": "intention_deleted",
+                        "id": intention_id
+                    })
+                else:
+                    await websocket.send_json({
+                        "type": "error",
+                        "content": "Intention not found"
+                    })
+
+            elif action == "toggle_intention":
+                daemon = get_daemon()
+                intention_id = data.get("id", "")
+                intention = daemon.toggle_intention(intention_id)
+                if intention:
+                    await websocket.send_json({
+                        "type": "intention_toggled",
+                        "intention": intention
+                    })
+                else:
+                    await websocket.send_json({
+                        "type": "error",
+                        "content": "Intention not found"
+                    })
+
+            elif action == "run_intention":
+                daemon = get_daemon()
+                intention_id = data.get("id", "")
+                intention = daemon.get_intention(intention_id)
+                if intention:
+                    # Run in background, results streamed via broadcast_intention
+                    await websocket.send_json({
+                        "type": "notification",
+                        "content": f"🚀 Running intention: {intention['name']}"
+                    })
+                    asyncio.create_task(daemon.run_intention_now(intention_id))
+                else:
+                    await websocket.send_json({
+                        "type": "error",
+                        "content": "Intention not found"
                     })
 
     except WebSocketDisconnect:
