@@ -3,12 +3,14 @@
  * Alpine.js component for the dashboard
  *
  * Changes (2026-02-05):
- * - Added Mission Control multi-agent orchestration UI
- * - Added missionControl state object with agents, tasks, activities, stats
- * - Added openMissionControl(), loadMCData(), createMCAgent(), createMCTask() methods
- * - Added deleteMCAgent(), deleteMCTask(), viewMCTask() methods
+ * - Added Mission Control as full view (not modal) with Linear-inspired design
+ * - Added "Missions" tab in top bar with live indicator
+ * - Added missionControl state: agents, tasks, activities, stats, selectedTask
+ * - Added loadMCData(), createMCAgent(), createMCTask() methods
+ * - Added selectMCTask(), updateMCTaskStatus(), updateMCTaskPriority() methods
+ * - Added getAgentInitial(), getAgentName() helper methods
  * - Added filteredMCTasks getter for task filtering
- * - Added formatMCDate() for Mission Control date formatting
+ * - Added formatMCDate() for relative time formatting
  *
  * Changes (2026-02-04):
  * - Fixed Memory UI: Added memoryLoading, memorySearch, memoryStats state
@@ -75,15 +77,14 @@ function app() {
         telegramPollInterval: null,
 
         // Mission Control state
-        showMissionControl: false,
         missionControl: {
             loading: false,
-            tab: 'agents',
             taskFilter: 'all',
             agents: [],
             tasks: [],
             activities: [],
-            stats: { total_agents: 0, active_tasks: 0, recent_activities: 0, total_documents: 0 },
+            stats: { total_agents: 0, active_tasks: 0, completed_today: 0, total_documents: 0 },
+            selectedTask: null,
             showCreateAgent: false,
             showCreateTask: false,
             agentForm: { name: '', role: '', description: '', specialties: '' },
@@ -1410,21 +1411,21 @@ function app() {
         // ==================== Mission Control ====================
 
         /**
-         * Open Mission Control modal
-         */
-        async openMissionControl() {
-            this.showMissionControl = true;
-            this.missionControl.loading = true;
-            await this.loadMCData();
-            this.$nextTick(() => {
-                if (window.refreshIcons) window.refreshIcons();
-            });
-        },
-
-        /**
          * Load Mission Control data from API
          */
         async loadMCData() {
+            // Skip if already loaded and not stale
+            if (this.missionControl.agents.length > 0 && !this.missionControl.loading) {
+                // Just refresh activity feed
+                try {
+                    const activityRes = await fetch('/api/mission-control/activity');
+                    if (activityRes.ok) this.missionControl.activities = await activityRes.json();
+                } catch (e) { /* ignore */ }
+                this.$nextTick(() => { if (window.refreshIcons) window.refreshIcons(); });
+                return;
+            }
+
+            this.missionControl.loading = true;
             try {
                 const [agentsRes, tasksRes, activityRes, statsRes] = await Promise.all([
                     fetch('/api/mission-control/agents'),
@@ -1596,12 +1597,77 @@ function app() {
         },
 
         /**
-         * View task details (could expand for full task view modal)
+         * Select a task to show details
          */
-        viewMCTask(task) {
-            // For now, just show a toast with task info
-            // TODO: Implement full task detail view with messages
-            this.showToast(`Task: ${task.title}\nStatus: ${task.status}`, 'info');
+        selectMCTask(task) {
+            this.missionControl.selectedTask = task;
+            this.$nextTick(() => { if (window.refreshIcons) window.refreshIcons(); });
+        },
+
+        /**
+         * Update task status
+         */
+        async updateMCTaskStatus(taskId, status) {
+            try {
+                const res = await fetch(`/api/mission-control/tasks/${taskId}/status`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status })
+                });
+
+                if (res.ok) {
+                    // Update local state
+                    const task = this.missionControl.tasks.find(t => t.id === taskId);
+                    if (task) task.status = status;
+                    this.showToast(`Status updated to ${status}`, 'success');
+                    // Reload activity
+                    const activityRes = await fetch('/api/mission-control/activity');
+                    if (activityRes.ok) this.missionControl.activities = await activityRes.json();
+                }
+            } catch (e) {
+                console.error('Failed to update task status:', e);
+                this.showToast('Failed to update status', 'error');
+            }
+        },
+
+        /**
+         * Update task priority
+         */
+        async updateMCTaskPriority(taskId, priority) {
+            try {
+                const res = await fetch(`/api/mission-control/tasks/${taskId}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ priority })
+                });
+
+                if (res.ok) {
+                    // Update local state
+                    const task = this.missionControl.tasks.find(t => t.id === taskId);
+                    if (task) task.priority = priority;
+                    if (this.missionControl.selectedTask?.id === taskId) {
+                        this.missionControl.selectedTask.priority = priority;
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to update task priority:', e);
+            }
+        },
+
+        /**
+         * Get agent initial for avatar
+         */
+        getAgentInitial(agentId) {
+            const agent = this.missionControl.agents.find(a => a.id === agentId);
+            return agent ? agent.name.charAt(0).toUpperCase() : '?';
+        },
+
+        /**
+         * Get agent name by ID
+         */
+        getAgentName(agentId) {
+            const agent = this.missionControl.agents.find(a => a.id === agentId);
+            return agent ? agent.name : 'Unknown';
         },
 
         /**
