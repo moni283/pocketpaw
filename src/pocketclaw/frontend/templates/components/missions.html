@@ -2,16 +2,18 @@
   PocketPaw Dashboard - Crew View (Control Room)
 
   Created: 2026-02-05
-  Updated: 2026-02-05 - Added task execution with Run/Stop buttons and live output panel
+  Updated: 2026-02-05 - Redesigned task list as compact table layout
 
   Linear-inspired project management dashboard for multi-agent orchestration.
   Provides real-time visibility into what agents are doing.
 
   Features:
-  - Run button on task cards to execute with assigned agent
+  - Compact table-style task list with single row per task
+  - Columns: Status | Title | Priority | Assignee | Status Badge | Time | Actions
+  - Clickable status checkbox to toggle completion
+  - Run/Stop buttons for task execution
   - Live output streaming during task execution
-  - Running indicator with animated pulse
-  - Stop button to cancel running tasks
+  - Responsive columns (hide on smaller screens)
 -->
 <!-- Missions View -->
 <div class="flex-1 flex flex-col pt-20 overflow-hidden" x-show="view === 'missions'" x-cloak>
@@ -115,87 +117,131 @@
                         </button>
                     </div>
 
+                    <!-- Table Header -->
+                    <div class="flex items-center px-4 py-2 border-b border-white/10 bg-white/[0.02] text-[10px] font-semibold text-white/40 uppercase tracking-wider">
+                        <div class="w-8"></div>
+                        <div class="flex-1 min-w-0">Task</div>
+                        <div class="w-20 text-center hidden sm:block">Priority</div>
+                        <div class="w-24 text-center hidden md:block">Assignee</div>
+                        <div class="w-20 text-center hidden lg:block">Status</div>
+                        <div class="w-20 text-right">Time</div>
+                        <div class="w-24 text-right">Actions</div>
+                    </div>
+
                     <!-- Task Items -->
                     <template x-for="task in getFilteredMCTasks()" :key="task.id">
                         <div
-                            class="group flex items-start gap-3 px-4 py-3 border-b border-white/5 hover:bg-white/[0.02] cursor-pointer transition-all"
+                            class="group flex items-center px-4 py-2.5 border-b border-white/5 hover:bg-white/[0.03] cursor-pointer transition-all"
                             @click="selectMCTask(task)"
-                            :class="missionControl.selectedTask?.id === task.id ? 'bg-white/[0.04] border-l-2 border-l-accent' : ''"
+                            :class="missionControl.selectedTask?.id === task.id ? 'bg-accent/5 border-l-2 border-l-accent' : ''"
                         >
-                            <!-- Status Indicator -->
-                            <div class="mt-1">
+                            <!-- Status Checkbox -->
+                            <div class="w-8 shrink-0">
                                 <div
-                                    class="w-4 h-4 rounded-full border-2 flex items-center justify-center transition-all"
+                                    class="w-4 h-4 rounded border-2 flex items-center justify-center cursor-pointer transition-all hover:scale-110"
                                     :class="{
                                         'border-blue-500/50 bg-blue-500/10': task.status === 'inbox',
                                         'border-cyan-500/50 bg-cyan-500/10': task.status === 'assigned',
                                         'border-amber-500 bg-amber-500/20': task.status === 'in_progress',
                                         'border-purple-500/50 bg-purple-500/10': task.status === 'review',
-                                        'border-green-500 bg-green-500/20': task.status === 'done',
+                                        'border-green-500 bg-green-500': task.status === 'done',
                                         'border-red-500/50 bg-red-500/10': task.status === 'blocked'
                                     }"
+                                    @click.stop="updateMCTaskStatus(task.id, task.status === 'done' ? 'inbox' : 'done')"
+                                    :title="task.status === 'done' ? 'Mark incomplete' : 'Mark complete'"
                                 >
-                                    <i x-show="task.status === 'done'" data-lucide="check" class="w-2.5 h-2.5 text-green-500"></i>
+                                    <i x-show="task.status === 'done'" data-lucide="check" class="w-2.5 h-2.5 text-white"></i>
                                     <div x-show="task.status === 'in_progress'" class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></div>
                                 </div>
                             </div>
 
-                            <!-- Task Content -->
-                            <div class="flex-1 min-w-0">
-                                <div class="flex items-center gap-2 mb-1">
-                                    <h4
-                                        class="font-medium text-sm truncate"
-                                        :class="task.status === 'done' ? 'text-white/40 line-through' : 'text-white'"
-                                        x-text="task.title"
-                                    ></h4>
-                                    <span
-                                        x-show="task.priority === 'urgent'"
-                                        class="shrink-0 px-1.5 py-0.5 text-[10px] font-bold uppercase bg-red-500/20 text-red-400 rounded"
-                                    >Urgent</span>
-                                    <span
-                                        x-show="task.priority === 'high'"
-                                        class="shrink-0 px-1.5 py-0.5 text-[10px] font-bold uppercase bg-amber-500/20 text-amber-400 rounded"
-                                    >High</span>
-                                </div>
-                                <p class="text-xs text-white/40 truncate" x-text="task.description || 'No description'"></p>
+                            <!-- Title + Tags -->
+                            <div class="flex-1 min-w-0 flex items-center gap-2">
+                                <span
+                                    class="text-sm truncate"
+                                    :class="task.status === 'done' ? 'text-white/40 line-through' : 'text-white font-medium'"
+                                    x-text="task.title"
+                                ></span>
+                                <!-- Running indicator inline -->
+                                <span
+                                    x-show="isMCTaskRunning(task.id)"
+                                    class="shrink-0 flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium bg-green-500/20 text-green-400 rounded"
+                                >
+                                    <span class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                                    Running
+                                </span>
+                                <!-- Tags inline -->
+                                <template x-for="tag in (task.tags || []).slice(0, 2)" :key="tag">
+                                    <span class="shrink-0 text-[10px] text-white/30 bg-white/5 px-1.5 py-0.5 rounded hidden xl:inline" x-text="'#' + tag"></span>
+                                </template>
+                            </div>
 
-                                <!-- Task Meta -->
-                                <div class="flex items-center gap-3 mt-2">
-                                    <!-- Assignee Avatars -->
-                                    <div class="flex -space-x-1" x-show="task.assignee_ids && task.assignee_ids.length > 0">
+                            <!-- Priority -->
+                            <div class="w-20 shrink-0 text-center hidden sm:block">
+                                <span
+                                    x-show="task.priority === 'urgent'"
+                                    class="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold uppercase bg-red-500/20 text-red-400 rounded"
+                                >
+                                    <i data-lucide="alert-triangle" class="w-3 h-3"></i>
+                                    Urgent
+                                </span>
+                                <span
+                                    x-show="task.priority === 'high'"
+                                    class="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold uppercase bg-amber-500/20 text-amber-400 rounded"
+                                >
+                                    <i data-lucide="arrow-up" class="w-3 h-3"></i>
+                                    High
+                                </span>
+                                <span
+                                    x-show="task.priority === 'medium'"
+                                    class="inline-block px-2 py-0.5 text-[10px] text-white/40 bg-white/5 rounded"
+                                >Med</span>
+                                <span
+                                    x-show="task.priority === 'low'"
+                                    class="inline-block px-2 py-0.5 text-[10px] text-white/30 bg-white/5 rounded"
+                                >Low</span>
+                            </div>
+
+                            <!-- Assignee -->
+                            <div class="w-24 shrink-0 flex justify-center hidden md:flex">
+                                <template x-if="task.assignee_ids && task.assignee_ids.length > 0">
+                                    <div class="flex -space-x-1.5">
                                         <template x-for="assigneeId in (task.assignee_ids || []).slice(0, 3)" :key="assigneeId">
                                             <div
-                                                class="w-5 h-5 rounded-full bg-gradient-to-br from-accent to-purple-500 ring-2 ring-[#1c1c1e] flex items-center justify-center text-[8px] font-bold text-white"
+                                                class="w-6 h-6 rounded-full bg-gradient-to-br from-accent to-purple-500 ring-2 ring-[#1c1c1e] flex items-center justify-center text-[9px] font-bold text-white"
                                                 x-text="getAgentInitial(assigneeId)"
                                                 :title="getAgentName(assigneeId)"
                                             ></div>
                                         </template>
                                     </div>
-
-                                    <!-- Tags -->
-                                    <div class="flex gap-1" x-show="task.tags && task.tags.length > 0">
-                                        <template x-for="tag in (task.tags || []).slice(0, 2)" :key="tag">
-                                            <span class="text-[10px] text-white/30 bg-white/5 px-1.5 py-0.5 rounded" x-text="'#' + tag"></span>
-                                        </template>
-                                    </div>
-
-                                    <!-- Time -->
-                                    <span class="text-[10px] text-white/20 ml-auto" x-text="formatMCDate(task.created_at)"></span>
-                                </div>
+                                </template>
+                                <span x-show="!task.assignee_ids || task.assignee_ids.length === 0" class="text-[10px] text-white/20">—</span>
                             </div>
 
-                            <!-- Running Indicator -->
-                            <div
-                                x-show="isMCTaskRunning(task.id)"
-                                class="flex items-center gap-2"
-                            >
-                                <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                                <span class="text-[10px] text-green-400 font-medium">Running</span>
+                            <!-- Status Badge -->
+                            <div class="w-20 shrink-0 text-center hidden lg:block">
+                                <span
+                                    class="inline-block px-2 py-0.5 text-[10px] font-medium rounded capitalize"
+                                    :class="{
+                                        'bg-blue-500/20 text-blue-400': task.status === 'inbox',
+                                        'bg-cyan-500/20 text-cyan-400': task.status === 'assigned',
+                                        'bg-amber-500/20 text-amber-400': task.status === 'in_progress',
+                                        'bg-purple-500/20 text-purple-400': task.status === 'review',
+                                        'bg-green-500/20 text-green-400': task.status === 'done',
+                                        'bg-red-500/20 text-red-400': task.status === 'blocked'
+                                    }"
+                                    x-text="task.status.replace('_', ' ')"
+                                ></span>
+                            </div>
+
+                            <!-- Time -->
+                            <div class="w-20 shrink-0 text-right">
+                                <span class="text-[11px] text-white/30" x-text="formatMCDate(task.created_at)"></span>
                             </div>
 
                             <!-- Actions -->
-                            <div class="flex items-center gap-1" :class="isMCTaskRunning(task.id) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'" style="transition: opacity 0.2s;">
-                                <!-- Run Button (only show if has assignee and not running) -->
+                            <div class="w-24 shrink-0 flex items-center justify-end gap-0.5" :class="isMCTaskRunning(task.id) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'" style="transition: opacity 0.15s;">
+                                <!-- Run Button -->
                                 <button
                                     x-show="task.assignee_ids && task.assignee_ids.length > 0 && !isMCTaskRunning(task.id) && task.status !== 'done'"
                                     class="p-1.5 text-green-400/70 hover:text-green-400 hover:bg-green-500/10 rounded transition-all"
@@ -204,7 +250,7 @@
                                 >
                                     <i data-lucide="play" class="w-3.5 h-3.5"></i>
                                 </button>
-                                <!-- Stop Button (only show if running) -->
+                                <!-- Stop Button -->
                                 <button
                                     x-show="isMCTaskRunning(task.id)"
                                     class="p-1.5 text-red-400/70 hover:text-red-400 hover:bg-red-500/10 rounded transition-all"
@@ -213,10 +259,19 @@
                                 >
                                     <i data-lucide="square" class="w-3.5 h-3.5"></i>
                                 </button>
-                                <!-- Delete Button -->
+                                <!-- Edit Button -->
                                 <button
                                     x-show="!isMCTaskRunning(task.id)"
                                     class="p-1.5 text-white/30 hover:text-white hover:bg-white/10 rounded transition-all"
+                                    @click.stop="selectMCTask(task)"
+                                    title="View Details"
+                                >
+                                    <i data-lucide="eye" class="w-3.5 h-3.5"></i>
+                                </button>
+                                <!-- Delete Button -->
+                                <button
+                                    x-show="!isMCTaskRunning(task.id)"
+                                    class="p-1.5 text-white/30 hover:text-red-400 hover:bg-red-500/10 rounded transition-all"
                                     @click.stop="deleteMCTask(task.id)"
                                     title="Delete"
                                 >
