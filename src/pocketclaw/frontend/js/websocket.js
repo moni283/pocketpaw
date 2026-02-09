@@ -191,8 +191,17 @@ class PocketPawSocket {
             model_tier_complex: settings.modelTierComplex,
             tts_provider: settings.ttsProvider,
             tts_voice: settings.ttsVoice,
+            stt_model: settings.sttModel,
             self_audit_enabled: settings.selfAuditEnabled,
-            self_audit_schedule: settings.selfAuditSchedule
+            self_audit_schedule: settings.selfAuditSchedule,
+            memory_backend: settings.memoryBackend,
+            mem0_auto_learn: settings.mem0AutoLearn,
+            mem0_llm_provider: settings.mem0LlmProvider,
+            mem0_llm_model: settings.mem0LlmModel,
+            mem0_embedder_provider: settings.mem0EmbedderProvider,
+            mem0_embedder_model: settings.mem0EmbedderModel,
+            mem0_vector_store: settings.mem0VectorStore,
+            mem0_ollama_base_url: settings.mem0OllamaBaseUrl
         });
     }
 

@@ -286,6 +286,23 @@ ALWAYS instruct it to RETURN data as text, not open GUI apps.""",
             "required": ["query"],
         },
     },
+    {
+        "name": "forget",
+        "description": (
+            "Remove information from long-term memory. "
+            "Searches for matching memories and deletes them."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "What to search for and forget",
+                },
+            },
+            "required": ["query"],
+        },
+    },
 ]
 
 
@@ -349,8 +366,46 @@ class PocketPawOrchestrator:
         logger.info("=" * 50)
 
     def _get_filtered_tools(self) -> list[dict]:
-        """Return TOOLS filtered by the active tool policy."""
-        return [t for t in TOOLS if self._policy.is_tool_allowed(t["name"])]
+        """Return TOOLS filtered by the active tool policy, plus MCP tools."""
+        base = [t for t in TOOLS if self._policy.is_tool_allowed(t["name"])]
+        base.extend(self._get_mcp_tools())
+        return base
+
+    def _get_mcp_tools(self) -> list[dict]:
+        """Convert MCP tools to Anthropic tool format, filtered by policy."""
+        try:
+            from pocketclaw.mcp.manager import get_mcp_manager
+        except ImportError:
+            return []
+
+        mgr = get_mcp_manager()
+        result = []
+        for tool_info in mgr.get_all_tools():
+            if not self._policy.is_mcp_tool_allowed(tool_info.server_name, tool_info.name):
+                continue
+            # Build unique name: mcp_<server>__<tool>
+            tool_name = f"mcp_{tool_info.server_name}__{tool_info.name}"
+            result.append(
+                {
+                    "name": tool_name,
+                    "description": (f"[MCP:{tool_info.server_name}] {tool_info.description}"),
+                    "input_schema": tool_info.input_schema or {"type": "object", "properties": {}},
+                }
+            )
+        return result
+
+    def _parse_mcp_tool_name(self, tool_name: str) -> tuple[str, str] | None:
+        """Parse an MCP tool name back to (server_name, original_tool_name).
+
+        Returns None if not an MCP tool name.
+        """
+        if not tool_name.startswith("mcp_"):
+            return None
+        rest = tool_name[4:]  # strip "mcp_"
+        parts = rest.split("__", 1)
+        if len(parts) != 2:
+            return None
+        return parts[0], parts[1]
 
     # =========================================================================
     # SECURITY METHODS
@@ -588,7 +643,35 @@ class PocketPawOrchestrator:
 
                 return "\n".join(lines)
 
+            elif tool_name == "forget":
+                from pocketclaw.memory.manager import get_memory_manager
+
+                query = tool_input.get("query", "")
+                if not query:
+                    return "Error: No query provided for forget"
+
+                manager = get_memory_manager()
+                results = await manager.search(query, limit=5)
+                if not results:
+                    return f"No memories found matching: {query}"
+
+                deleted = 0
+                for entry in results:
+                    ok = await manager._store.delete(entry.id)
+                    if ok:
+                        deleted += 1
+                return f"Forgot {deleted} memory(ies) matching: {query}"
+
             else:
+                # Check if it's an MCP tool
+                mcp_parsed = self._parse_mcp_tool_name(tool_name)
+                if mcp_parsed:
+                    server_name, original_tool = mcp_parsed
+                    from pocketclaw.mcp.manager import get_mcp_manager
+
+                    mgr = get_mcp_manager()
+                    result = await mgr.call_tool(server_name, original_tool, tool_input)
+                    return self._redact_secrets(result)
                 return f"Unknown tool: {tool_name}"
 
         except Exception as e:

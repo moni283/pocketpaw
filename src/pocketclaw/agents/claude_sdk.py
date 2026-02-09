@@ -18,11 +18,12 @@ Changes:
 """
 
 import logging
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import AsyncIterator, Optional, Any
+from typing import Any
 
-from pocketclaw.config import Settings
 from pocketclaw.agents.protocol import AgentEvent, ExecutorProtocol
+from pocketclaw.config import Settings
 from pocketclaw.tools.policy import ToolPolicy
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,22 @@ You have extra tools installed. Call them with:
 python -m pocketclaw.tools.cli <tool_name> '<json_args>'
 ```
 
+### Memory
+- `remember '{"content": "User name is Alice", "tags": ["personal"]}'` — save to long-term memory
+- `forget '{"query": "old preference"}'` — remove outdated memories
+
+**When to use remember:**
+- User tells you their name, preferences, or personal details
+- User explicitly asks "remember this"
+- You learn something important about the user's projects or workflow
+
+**Always remember proactively** — don't wait to be asked.
+If someone shares personal info, immediately call remember.
+
+**Reading memories:** Your system prompt already contains a "Memory
+Context" section with ALL saved memories pre-loaded. Just read it
+directly — never use a tool to look up what you already know.
+
 ### Email (Gmail — requires OAuth)
 - `gmail_search '{"query": "is:unread", "max_results": 10}'` — search emails
 - `gmail_read '{"message_id": "MSG_ID"}'` — read full email
@@ -87,6 +104,8 @@ python -m pocketclaw.tools.cli <tool_name> '<json_args>'
 ### Voice / TTS
 - `text_to_speech '{"text": "Hello world", "voice": "alloy"}'` — generate speech audio
   Voices (OpenAI): alloy, echo, fable, onyx, nova, shimmer
+- `speech_to_text '{"audio_file": "/path/to/audio.mp3"}'` — transcribe audio to text
+  Optional: `"language": "en"` (auto-detected if omitted). Supports mp3/wav/m4a/webm.
 
 ### Research
 - `research '{"topic": "quantum computing", "depth": "standard"}'` — multi-source research
@@ -102,6 +121,31 @@ python -m pocketclaw.tools.cli <tool_name> '<json_args>'
 ### Skills
 - `create_skill '{"skill_name": "my-skill", "description": "...", "prompt_template": "..."}'`
 
+### Google Drive (requires OAuth)
+- `drive_list '{"query": "name contains \\'report\\'"}'` — list/search files
+- `drive_download '{"file_id": "FILE_ID"}'` — download a file
+- `drive_upload '{"file_path": "/path/to/file.pdf", "folder_id": "FOLDER_ID"}'` — upload file
+- `drive_share '{"file_id": "FILE_ID", "email": "user@example.com", "role": "reader"}'` — share
+
+### Google Docs (requires OAuth)
+- `docs_read '{"document_id": "DOC_ID"}'` — read document as plain text
+- `docs_create '{"title": "My Doc", "content": "Hello world"}'` — create a new document
+- `docs_search '{"query": "meeting notes"}'` — search Google Docs by name
+
+### Spotify (requires OAuth)
+- `spotify_search '{"query": "bohemian rhapsody", "type": "track"}'` — search tracks/albums/artists
+- `spotify_now_playing '{}'` — what's currently playing
+- `spotify_playback '{"action": "play"}'` — play/pause/next/prev/volume (actions: play, pause, next, prev, volume)
+- `spotify_playlist '{"action": "list"}'` — list playlists or add track
+
+### OCR
+- `ocr '{"image_path": "/path/to/image.png"}'` — extract text from image (uses GPT-4o vision)
+
+### Reddit
+- `reddit_search '{"query": "best python frameworks", "subreddit": "python"}'` — search Reddit
+- `reddit_read '{"url": "https://reddit.com/r/python/comments/..."}'` — read post + comments
+- `reddit_trending '{"subreddit": "all", "limit": 10}'` — trending posts
+
 ### Delegation
 - `delegate_claude_code '{"task": "refactor the auth module", "timeout": 300}'` — delegate to Claude Code CLI
 
@@ -111,8 +155,10 @@ python -m pocketclaw.tools.cli <tool_name> '<json_args>'
 2. **Use PocketPaw tools** — always prefer `python -m pocketclaw.tools.cli` over platform-specific commands (AppleScript, PowerShell, etc.). These tools work on all operating systems.
 3. **Be concise** — give clear, helpful responses.
 4. **Be safe** — don't run destructive commands. Ask for confirmation if unsure.
-5. If Gmail/Calendar returns "not authenticated", tell the user to visit:
-   http://localhost:8888/api/oauth/authorize?service=google_gmail (or google_calendar)
+5. If Gmail/Calendar/Drive/Docs returns "not authenticated", tell the user to visit:
+   http://localhost:8888/api/oauth/authorize?service=google_gmail (or google_calendar, google_drive, google_docs)
+6. If Spotify returns "not authenticated", tell the user to visit:
+   http://localhost:8888/api/oauth/authorize?service=spotify
 """
 
 
@@ -140,7 +186,7 @@ class ClaudeAgentSDK:
         "WebFetch": "browser",
     }
 
-    def __init__(self, settings: Settings, executor: Optional[ExecutorProtocol] = None):
+    def __init__(self, settings: Settings, executor: ExecutorProtocol | None = None):
         self.settings = settings
         self._executor = executor  # Optional - SDK has built-in execution
         self._stop_flag = False
@@ -171,25 +217,19 @@ class ClaudeAgentSDK:
         """Initialize the Claude Agent SDK with all imports."""
         try:
             # Core SDK imports
-            from claude_agent_sdk import (
-                query,
-                ClaudeAgentOptions,
-                HookMatcher,
-            )
-
             # Message type imports
-            from claude_agent_sdk import (
-                AssistantMessage,
-                UserMessage,
-                SystemMessage,
-                ResultMessage,
-            )
-
             # Content block imports
             from claude_agent_sdk import (
+                AssistantMessage,
+                ClaudeAgentOptions,
+                HookMatcher,
+                ResultMessage,
+                SystemMessage,
                 TextBlock,
-                ToolUseBlock,
                 ToolResultBlock,
+                ToolUseBlock,
+                UserMessage,
+                query,
             )
 
             # Store references
@@ -238,7 +278,7 @@ class ClaudeAgentSDK:
         self._cwd = path
         logger.info(f"📂 Working directory set to: {path}")
 
-    def _is_dangerous_command(self, command: str) -> Optional[str]:
+    def _is_dangerous_command(self, command: str) -> str | None:
         """Check if a command matches dangerous patterns.
 
         Args:
@@ -357,6 +397,48 @@ class ClaudeAgentSDK:
                 )
         return tools
 
+    def _get_mcp_servers(self) -> dict[str, dict]:
+        """Load enabled MCP server configs, filtered by tool policy.
+
+        Returns a dict keyed by server name.  The SDK supports three
+        transport types: stdio, sse, and http — each with its own
+        TypedDict shape (McpStdioServerConfig, McpSSEServerConfig,
+        McpHttpServerConfig).
+        """
+        try:
+            from pocketclaw.mcp.config import load_mcp_config
+        except ImportError:
+            return {}
+
+        configs = load_mcp_config()
+        servers: dict[str, dict] = {}
+        for cfg in configs:
+            if not cfg.enabled:
+                continue
+            if not self._policy.is_mcp_server_allowed(cfg.name):
+                logger.info("MCP server '%s' blocked by tool policy", cfg.name)
+                continue
+
+            if cfg.transport == "stdio":
+                entry: dict = {"type": "stdio", "command": cfg.command}
+                if cfg.args:
+                    entry["args"] = cfg.args
+                if cfg.env:
+                    entry["env"] = cfg.env
+            elif cfg.transport in ("http", "sse"):
+                if not cfg.url:
+                    logger.warning("MCP server '%s' (%s) has no url", cfg.name, cfg.transport)
+                    continue
+                entry = {"type": cfg.transport, "url": cfg.url}
+                if cfg.env:
+                    entry["headers"] = cfg.env
+            else:
+                logger.debug("Skipping MCP '%s' (unknown transport=%s)", cfg.name, cfg.transport)
+                continue
+
+            servers[cfg.name] = entry
+        return servers
+
     async def chat(
         self,
         message: str,
@@ -442,17 +524,21 @@ class ClaudeAgentSDK:
                 "cwd": str(self._cwd),  # Working directory
             }
 
+            # Wire in MCP servers (policy-filtered)
+            mcp_servers = self._get_mcp_servers()
+            if mcp_servers:
+                options_kwargs["mcp_servers"] = mcp_servers
+                logger.info("MCP: passing %d servers to Claude SDK", len(mcp_servers))
+
             # Enable token-by-token streaming if StreamEvent is available
             if self._StreamEvent is not None:
                 options_kwargs["include_partial_messages"] = True
 
-            # Permission mode based on settings
-            if self.settings.bypass_permissions:
-                options_kwargs["permission_mode"] = "bypassPermissions"
-                logger.info("⚡ Permission bypass enabled")
-            else:
-                # Accept edits automatically but prompt for other things
-                options_kwargs["permission_mode"] = "acceptEdits"
+            # Permission handling — PocketPaw runs headless (web/chat), so
+            # there is no terminal to show interactive permission prompts.
+            # bypassPermissions auto-approves ALL tool calls (including MCP).
+            # Dangerous Bash commands are still caught by the PreToolUse hook.
+            options_kwargs["permission_mode"] = "bypassPermissions"
 
             # Create options
             options = self._ClaudeAgentOptions(**options_kwargs)
