@@ -344,6 +344,24 @@ class Settings(BaseSettings):
     web_host: str = Field(default="127.0.0.1", description="Web server host")
     web_port: int = Field(default=8888, description="Web server port")
 
+    # Identity / Multi-user
+    owner_id: str = Field(
+        default="",
+        description="Global owner identifier (e.g. Telegram user ID). Empty = single-user mode.",
+    )
+    notification_channels: list[str] = Field(
+        default_factory=list,
+        description="Targets for autonomous messages, e.g. ['telegram:12345', 'discord:98765']",
+    )
+
+    # Media Downloads
+    media_download_dir: str = Field(
+        default="", description="Custom media download dir (default: ~/.pocketclaw/media/)"
+    )
+    media_max_file_size_mb: int = Field(
+        default=50, description="Max media file size in MB (0 = unlimited)"
+    )
+
     # Concurrency
     max_concurrent_conversations: int = Field(
         default=5, description="Max parallel conversations processed simultaneously"
@@ -494,6 +512,12 @@ class Settings(BaseSettings):
             # Generic Webhooks
             "webhook_configs": self.webhook_configs,
             "webhook_sync_timeout": self.webhook_sync_timeout,
+            # Identity / Multi-user
+            "owner_id": self.owner_id,
+            "notification_channels": self.notification_channels,
+            # Media Downloads
+            "media_download_dir": self.media_download_dir,
+            "media_max_file_size_mb": self.media_max_file_size_mb,
             # Concurrency
             "max_concurrent_conversations": self.max_concurrent_conversations,
         }
