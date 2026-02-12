@@ -29,7 +29,7 @@
 > **🚧 Beta:** This project is under active development. Expect breaking changes between versions.
 
 <p align="center">
-  <video src="https://github.com/user-attachments/assets/3e3b3128-bf90-4dfe-a2ec-94116e4b3c25" width="700" controls></video>
+  <video src="https://github.com/user-attachments/assets/a15bb8c7-6897-40d2-8111-aa905fe3fdfe" width="700" controls></video>
 </p>
 
 ---
@@ -191,84 +191,25 @@ Uses your existing Chrome if you have it. No extra downloads. If you don't have 
 
 ## Architecture
 
-```mermaid
-graph TD
-    %% Node Definitions
-    User(["YOU <br/>(Web / Discord / Slack / WhatsApp / Telegram)"])
+<p align="center">
+  <img src="assets/diagrams/pocket-paw-system-architecture.png" alt="PocketPaw System Architecture" width="800">
+</p>
 
-    subgraph Channels ["Channel Adapters"]
-        Adapters["WebSocket Dashboard  •  Discord  •  Slack<br/>WhatsApp  •  Telegram  •  Signal  •  Matrix<br/>Teams  •  Google Chat"]
-    end
+### Agent Backends
 
-    subgraph Messaging ["Internal Transport"]
-        Bus["<b>Message Bus</b><br/>Async Event Queue • Inbound/Outbound Routing"]
-    end
-
-    subgraph Core ["Core Intelligence"]
-        direction TB
-        subgraph AgentLoop ["Agent Loop"]
-            Context["<b>Context Builder</b><br/>Identity + Soul + Style + Memory"]
-            Router["<b>Agent Router</b>"]
-            SDKs["Claude SDK (Recommended)<br/>Open Interpreter<br/>Native"]
-            Context --> Router --> SDKs
-        end
-
-        subgraph MissionControl ["Mission Control"]
-            Orch["Multi-agent Orchestration<br/>Task Assignment & Lifecycle<br/>Heartbeat Daemon (15 min)"]
-            Stream["Live Execution Streaming<br/>Document Management<br/>Agent Status Tracking"]
-            Status["Status: INBOX -> ASSIGNED -><br/>IN_PROGRESS -> REVIEW -> DONE"]
-        end
-    end
-
-    subgraph Tools ["Tool Registry"]
-        Registry["Shell • Filesystem • Browser • Desktop • Memory • HTTP Fetch<br/>Gmail • Calendar • Drive • Docs • Spotify • Reddit • OCR<br/>Web Search • Research • Voice • Image Gen • MCP"]
-    end
-
-    subgraph Support ["Security & Routing"]
-        LLM["<b>LLM Router</b><br/>Anthropic • OpenAI • Ollama<br/>Auto-detection + Fallback"]
-        Security["<b>Security Layer (Guardian AI)</b><br/>Command Blocking • Audit Logs<br/>File Jail (Sandbox) • Panic Button"]
-    end
-
-    subgraph Memory ["Memory System"]
-        FileStore["<b>File Store</b> (Default)<br/>Markdown-based<br/>Human-readable"]
-        Mem0["<b>Mem0 Store</b> (Optional)<br/>Semantic Vector Search<br/>Fact Extraction"]
-        API["API: remember() • recall() • search() • get_context()"]
-    end
-
-    %% Connections
-    User --> Adapters
-    Adapters --> Bus
-    Bus --> AgentLoop
-    Bus --> MissionControl
-    AgentLoop --> Registry
-    Registry --> LLM
-    Registry --> Security
-    LLM --> Memory
-    Security -.-> Registry
-
-    %% Styling
-    classDef default font-family:arial,font-size:14px;
-    classDef highlight fill:#f9f,stroke:#333,stroke-width:2px;
-    classDef coreBox fill:#f5f7ff,stroke:#4a90e2,stroke-width:2px;
-    classDef securityBox fill:#fff5f5,stroke:#e53e3e,stroke-width:1px;
-
-    class AgentLoop,MissionControl coreBox;
-    class Security securityBox;
-```
-
-### Claude Agent SDK (Default, Recommended)
-
-Uses Anthropic's official Claude Agent SDK with built-in tools (Bash, Read, Write, Edit, Glob, Grep, WebSearch). Supports `PreToolUse` hooks for dangerous command blocking.
-
-### PocketPaw Native
-
-Custom orchestrator: Anthropic SDK for reasoning + Open Interpreter for code execution.
-
-### Open Interpreter
-
-Standalone Open Interpreter supporting Ollama, OpenAI, or Anthropic as the LLM provider. Good for fully local setups with Ollama.
+- **Claude Agent SDK (Default, Recommended).** Anthropic's official SDK with built-in tools (Bash, Read, Write, Edit, Glob, Grep, WebSearch). Supports `PreToolUse` hooks for dangerous command blocking.
+- **PocketPaw Native.** Custom orchestrator: Anthropic SDK for reasoning + Open Interpreter for code execution.
+- **Open Interpreter.** Standalone, supports Ollama, OpenAI, or Anthropic. Good for fully local setups with Ollama.
 
 Switch anytime in settings or config.
+
+<details>
+<summary>Tool System Architecture</summary>
+<br>
+<p align="center">
+  <img src="assets/diagrams/tool-system-architecture.png" alt="Tool System Architecture and Policy Engine" width="800">
+</p>
+</details>
 
 ---
 
@@ -349,6 +290,10 @@ See the [full configuration reference](documentation/features/) for all availabl
 
 ## Security
 
+<p align="center">
+  <img src="assets/diagrams/7-layer-security-stack.png" alt="PocketPaw 7-Layer Security Stack" width="500">
+</p>
+
 - **Guardian AI.** A secondary LLM reviews every shell command before execution and decides if it's safe.
 - **Injection Scanner.** Two-tier detection (regex heuristics + optional LLM deep scan) blocks prompt injection attacks.
 - **Tool Policy.** Restrict agent tool access with profiles (`minimal`, `coding`, `full`) and allow/deny lists.
@@ -359,6 +304,14 @@ See the [full configuration reference](documentation/features/) for all availabl
 - **Single User Lock.** Only authorized users can control the agent.
 - **File Jail.** Operations restricted to allowed directories.
 - **Local LLM Option.** Use Ollama and nothing phones home.
+
+<details>
+<summary>Detailed security architecture</summary>
+<br>
+<p align="center">
+  <img src="assets/diagrams/security-architecture.png" alt="PocketPaw Security Architecture (Defense-in-Depth)" width="800">
+</p>
+</details>
 
 See [Security documentation](documentation/features/security.md) for details.
 
