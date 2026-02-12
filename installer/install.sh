@@ -1,6 +1,6 @@
 #!/bin/sh
 # PocketPaw Installer Bootstrap
-# Usage: curl -fsSL https://raw.githubusercontent.com/pocketpaw/pocketpaw/dev/installer/install.sh | sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/pocketpaw/pocketpaw/main/installer/install.sh | sh
 # POSIX sh — no bashisms
 
 set -e
@@ -18,7 +18,7 @@ OS="$(uname -s 2>/dev/null || echo Unknown)"
 case "$OS" in
     CYGWIN*|MINGW*|MSYS*|Windows_NT)
         printf '\033[33mNote:\033[0m On Windows, use the PowerShell installer instead:\n'
-        printf '       irm https://raw.githubusercontent.com/pocketpaw/pocketpaw/dev/installer/install.ps1 | iex\n'
+        printf '       irm https://raw.githubusercontent.com/pocketpaw/pocketpaw/main/installer/install.ps1 | iex\n'
         printf '\n'
         printf '       Or use WSL (Windows Subsystem for Linux):\n'
         printf '       https://learn.microsoft.com/windows/wsl/install\n'
@@ -200,7 +200,7 @@ INSTALLER="$TMPDIR/pocketpaw_installer.py"
 cleanup() { rm -f "$INSTALLER"; }
 trap cleanup EXIT INT TERM
 
-INSTALLER_URL="https://raw.githubusercontent.com/pocketpaw/pocketpaw/dev/installer/installer.py"
+INSTALLER_URL="https://raw.githubusercontent.com/pocketpaw/pocketpaw/main/installer/installer.py"
 
 if command -v curl >/dev/null 2>&1; then
     DOWNLOAD="curl -fsSL"
@@ -214,7 +214,7 @@ fi
 printf '  Downloading installer...\n'
 if ! $DOWNLOAD "$INSTALLER_URL" > "$INSTALLER" 2>/dev/null; then
     printf '\033[33mWarn:\033[0m Primary download failed, trying fallback...\n'
-    FALLBACK_URL="https://raw.githubusercontent.com/pocketpaw/pocketpaw/main/installer/installer.py"
+    FALLBACK_URL="https://raw.githubusercontent.com/pocketpaw/pocketpaw/dev/installer/installer.py"
     if ! $DOWNLOAD "$FALLBACK_URL" > "$INSTALLER" 2>/dev/null; then
         printf '\033[31mError:\033[0m Could not download installer.\n'
         printf '       Try manually: %s\n' "$INSTALLER_URL"

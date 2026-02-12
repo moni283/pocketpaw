@@ -25,6 +25,12 @@
 ## Quick Start
 
 ```bash
+curl -fsSL https://pocketpaw.dev/install.sh | sh
+```
+
+Or install directly:
+
+```bash
 pip install pocketpaw && pocketpaw
 ```
 

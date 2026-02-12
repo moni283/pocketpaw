@@ -25,7 +25,7 @@ from pathlib import Path
 VERSION = "0.2.0"
 PACKAGE = "pocketpaw"
 GIT_REPO = "https://github.com/pocketpaw/pocketpaw.git"
-GIT_BRANCH = "dev"
+GIT_BRANCH = "main"
 CONFIG_DIR = Path.home() / ".pocketclaw"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 
@@ -1187,7 +1187,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--from-git",
         action="store_true",
-        help="Install from the dev branch on GitHub instead of PyPI",
+        help="Install from the main branch on GitHub instead of PyPI",
     )
     return parser
 

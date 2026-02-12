@@ -14,7 +14,7 @@
     Installation profile: minimal, recommended (default), or full.
 
 .EXAMPLE
-    irm https://raw.githubusercontent.com/pocketpaw/pocketpaw/dev/installer/install.ps1 | iex
+    irm https://raw.githubusercontent.com/pocketpaw/pocketpaw/main/installer/install.ps1 | iex
 #>
 
 [CmdletBinding()]
@@ -202,8 +202,8 @@ if ($uvAvailable) {
 Write-Host ""
 
 # ── Download installer.py ──────────────────────────────────────────────
-$InstallerUrl = "https://raw.githubusercontent.com/pocketpaw/pocketpaw/dev/installer/installer.py"
-$FallbackUrl = "https://raw.githubusercontent.com/pocketpaw/pocketpaw/main/installer/installer.py"
+$InstallerUrl = "https://raw.githubusercontent.com/pocketpaw/pocketpaw/main/installer/installer.py"
+$FallbackUrl = "https://raw.githubusercontent.com/pocketpaw/pocketpaw/dev/installer/installer.py"
 $TempInstaller = Join-Path $env:TEMP "pocketpaw_installer.py"
 
 # Configure proxy if set
