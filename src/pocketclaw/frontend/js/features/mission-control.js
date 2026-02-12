@@ -2,14 +2,22 @@
  * PocketPaw - Mission Control Feature Module
  *
  * Created: 2026-02-05
- * Extracted from app.js as part of componentization refactor.
+ * Updated: 2026-02-12 — Enhanced Deep Work task table with:
+ *   - Execution levels (phase grouping by dependency order)
+ *   - Expandable task rows with inline deliverable preview
+ *   - Skip task functionality
+ *   - List/timeline view toggle
+ *   - Blocker/blocks name resolution helpers
+ *   - Task readiness checking for inline run buttons
+ *   - handleMCEvent mc_task_completed updates projectTasks
  *
  * Contains all Crew (Mission Control) related state and methods:
  * - Agent CRUD operations
  * - Task CRUD operations
- * - Task execution (run/stop)
+ * - Task execution (run/stop/skip)
  * - WebSocket event handling for real-time updates
  * - Agent Activity Sheet
+ * - Deep Work project orchestration
  * - Comments/Thread
  * - Deliverables
  */
@@ -48,6 +56,29 @@ window.PocketPaw.MissionControl = {
                 // Deliverables state
                 taskDeliverables: [],
                 deliverablesLoading: false,
+
+                // Deep Work state
+                crewTab: 'tasks',              // 'tasks' | 'projects'
+                projects: [],                  // List of projects
+                selectedProject: null,         // Currently selected project
+                projectTasks: [],              // Tasks for selected project
+                projectPrd: null,              // PRD document for selected project
+                projectProgress: null,         // {completed, total, percent}
+                showStartProject: false,       // Start project modal
+                showProjectDetail: false,      // Full project detail sheet
+                projectInput: '',              // Natural language project input
+                researchDepth: 'standard',     // 'quick' | 'standard' | 'deep'
+                projectStarting: false,        // Loading state while planner runs
+                planningPhase: '',             // Current phase: research, prd, tasks, team
+                planningMessage: '',           // Phase progress message
+                planningProjectId: null,       // Project being planned
+
+                // Enhanced task table state
+                executionLevels: [],           // list of lists of task IDs from API
+                taskLevelMap: {},              // {task_id: level_index}
+                expandedTaskId: null,          // which task row is expanded
+                taskViewMode: 'list',          // 'list' | 'timeline'
+                taskDeliverableCache: {},      // {task_id: [documents...]} for inline preview
             }
         };
     },
@@ -80,11 +111,12 @@ window.PocketPaw.MissionControl = {
 
                 this.missionControl.loading = true;
                 try {
-                    const [agentsRes, tasksRes, activityRes, statsRes] = await Promise.all([
+                    const [agentsRes, tasksRes, activityRes, statsRes, projectsRes] = await Promise.all([
                         fetch('/api/mission-control/agents'),
                         fetch('/api/mission-control/tasks'),
                         fetch('/api/mission-control/activity'),
-                        fetch('/api/mission-control/stats')
+                        fetch('/api/mission-control/stats'),
+                        fetch('/api/mission-control/projects')
                     ]);
 
                     // Unwrap API responses (backend returns {agents: [...], count: N} format)
@@ -110,6 +142,10 @@ window.PocketPaw.MissionControl = {
                             completed_today: raw.tasks?.by_status?.done || 0,
                             total_documents: raw.documents?.total || 0
                         };
+                    }
+                    if (projectsRes.ok) {
+                        const data = await projectsRes.json();
+                        this.missionControl.projects = data.projects || [];
                     }
                 } catch (e) {
                     console.error('Failed to load Crew data:', e);
@@ -296,16 +332,48 @@ window.PocketPaw.MissionControl = {
                     });
 
                     if (res.ok) {
-                        // Update local state
+                        const data = await res.json();
+                        const serverTask = data.task;
+
+                        // Update in main tasks list
                         const task = this.missionControl.tasks.find(t => t.id === taskId);
-                        if (task) task.status = status;
+                        if (task) {
+                            task.status = serverTask.status;
+                            task.completed_at = serverTask.completed_at;
+                            task.updated_at = serverTask.updated_at;
+                        }
+
+                        // Also update in projectTasks if present
+                        const pTask = this.missionControl.projectTasks.find(t => t.id === taskId);
+                        if (pTask) {
+                            pTask.status = serverTask.status;
+                            pTask.completed_at = serverTask.completed_at;
+                            pTask.updated_at = serverTask.updated_at;
+                        }
+
+                        // Refresh project progress if viewing a project
+                        if (this.missionControl.selectedProject) {
+                            fetch(`/api/deep-work/projects/${this.missionControl.selectedProject.id}/plan`)
+                                .then(r => r.ok ? r.json() : null)
+                                .then(planData => {
+                                    if (planData) {
+                                        this.missionControl.projectProgress = planData.progress || null;
+                                    }
+                                })
+                                .catch(() => {});
+                        }
+
                         this.showToast(`Status updated to ${status}`, 'success');
+
                         // Reload activity
                         const activityRes = await fetch('/api/mission-control/activity');
                         if (activityRes.ok) {
-                            const data = await activityRes.json();
-                            this.missionControl.activities = data.activities || [];
+                            const actData = await activityRes.json();
+                            this.missionControl.activities = actData.activities || [];
                         }
+                    } else {
+                        const err = await res.json().catch(() => ({}));
+                        this.showToast(err.detail || 'Failed to update status', 'error');
                     }
                 } catch (e) {
                     console.error('Failed to update task status:', e);
@@ -722,12 +790,21 @@ window.PocketPaw.MissionControl = {
                     // Remove from running tasks
                     delete this.missionControl.runningTasks[taskId];
 
-                    // Update task status
+                    // Update task status in main tasks list
                     const task = this.missionControl.tasks.find(t => t.id === taskId);
                     if (task) {
                         task.status = status === 'completed' ? 'done' : 'blocked';
                         if (status === 'completed') {
                             task.completed_at = new Date().toISOString();
+                        }
+                    }
+
+                    // Also update in projectTasks if present
+                    const pTask = this.missionControl.projectTasks.find(t => t.id === taskId);
+                    if (pTask) {
+                        pTask.status = status === 'completed' ? 'done' : 'blocked';
+                        if (status === 'completed') {
+                            pTask.completed_at = new Date().toISOString();
                         }
                     }
 
@@ -743,6 +820,19 @@ window.PocketPaw.MissionControl = {
                     if (status === 'completed') {
                         this.missionControl.stats.completed_today++;
                         this.missionControl.stats.active_tasks = Math.max(0, this.missionControl.stats.active_tasks - 1);
+                    }
+
+                    // Refresh project progress if viewing a project
+                    if (this.missionControl.selectedProject && status === 'completed') {
+                        fetch(`/api/deep-work/projects/${this.missionControl.selectedProject.id}/plan`)
+                            .then(r => r.ok ? r.json() : null)
+                            .then(progData => {
+                                if (progData) {
+                                    this.missionControl.projectProgress = progData.progress || null;
+                                    this.missionControl.projectTasks = progData.tasks || this.missionControl.projectTasks;
+                                }
+                            })
+                            .catch(() => { /* ignore */ });
                     }
 
                     // Show notification
@@ -967,6 +1057,501 @@ window.PocketPaw.MissionControl = {
                     this.$nextTick(() => {
                         if (window.refreshIcons) window.refreshIcons();
                     });
+                }
+            },
+
+            // ==================== Deep Work Projects ====================
+
+            /**
+             * Load all Deep Work projects
+             */
+            async loadProjects() {
+                try {
+                    const res = await fetch('/api/mission-control/projects');
+                    if (res.ok) {
+                        const data = await res.json();
+                        this.missionControl.projects = data.projects || [];
+                    }
+                } catch (e) {
+                    console.error('Failed to load projects:', e);
+                }
+                this.$nextTick(() => { if (window.refreshIcons) window.refreshIcons(); });
+            },
+
+            /**
+             * Start a new Deep Work project from natural language input
+             */
+            async startDeepWork() {
+                const input = this.missionControl.projectInput.trim();
+                if (!input || input.length < 10) {
+                    this.showToast('Please describe your project (at least 10 characters)', 'error');
+                    return;
+                }
+
+                this.missionControl.projectStarting = true;
+                this.missionControl.planningPhase = 'starting';
+                this.missionControl.planningMessage = 'Initializing project...';
+
+                try {
+                    const res = await fetch('/api/deep-work/start', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            description: input,
+                            research_depth: this.missionControl.researchDepth
+                        })
+                    });
+
+                    if (res.ok) {
+                        const data = await res.json();
+                        const project = data.project;
+                        this.missionControl.projects.unshift(project);
+                        this.missionControl.projectInput = '';
+                        this.missionControl.showStartProject = false;
+                        this.missionControl.planningProjectId = project.id;
+
+                        // Auto-select the new project
+                        this.selectProject(project);
+                        this.showToast('Project plan ready for review!', 'success');
+                    } else {
+                        const err = await res.json();
+                        this.showToast(err.detail || 'Failed to start project', 'error');
+                    }
+                } catch (e) {
+                    console.error('Failed to start Deep Work:', e);
+                    this.showToast('Failed to start project', 'error');
+                } finally {
+                    this.missionControl.projectStarting = false;
+                    this.missionControl.planningPhase = '';
+                    this.missionControl.planningMessage = '';
+                    this.missionControl.planningProjectId = null;
+                }
+            },
+
+            /**
+             * Select a project and load its details
+             */
+            async selectProject(project) {
+                this.missionControl.selectedProject = project;
+                this.missionControl.projectTasks = [];
+                this.missionControl.projectPrd = null;
+                this.missionControl.projectProgress = null;
+                this.missionControl.executionLevels = [];
+                this.missionControl.taskLevelMap = {};
+                this.missionControl.expandedTaskId = null;
+                this.missionControl.taskDeliverableCache = {};
+
+                try {
+                    const res = await fetch(`/api/deep-work/projects/${project.id}/plan`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        // Update project from server (may be newer)
+                        this.missionControl.selectedProject = data.project;
+                        this.missionControl.projectTasks = data.tasks || [];
+                        this.missionControl.projectProgress = data.progress || null;
+                        this.missionControl.projectPrd = data.prd || null;
+                        this.missionControl.executionLevels = data.execution_levels || [];
+                        this.missionControl.taskLevelMap = data.task_level_map || {};
+
+                        // Also update in projects list
+                        const idx = this.missionControl.projects.findIndex(p => p.id === project.id);
+                        if (idx >= 0) {
+                            this.missionControl.projects[idx] = data.project;
+                        }
+                    }
+                } catch (e) {
+                    console.error('Failed to load project detail:', e);
+                }
+                this.$nextTick(() => { if (window.refreshIcons) window.refreshIcons(); });
+            },
+
+            /**
+             * Approve a project plan and start execution
+             */
+            async approveProject(projectId) {
+                try {
+                    const res = await fetch(`/api/deep-work/projects/${projectId}/approve`, {
+                        method: 'POST'
+                    });
+
+                    if (res.ok) {
+                        const data = await res.json();
+                        // Update local project
+                        if (this.missionControl.selectedProject?.id === projectId) {
+                            this.missionControl.selectedProject = data.project;
+                        }
+                        const idx = this.missionControl.projects.findIndex(p => p.id === projectId);
+                        if (idx >= 0) {
+                            this.missionControl.projects[idx] = data.project;
+                        }
+                        this.showToast('Project approved! Execution started.', 'success');
+
+                        // Reload tasks (they should now be dispatched)
+                        await this.selectProject(data.project);
+                    } else {
+                        const err = await res.json();
+                        this.showToast(err.detail || 'Failed to approve project', 'error');
+                    }
+                } catch (e) {
+                    console.error('Failed to approve project:', e);
+                    this.showToast('Failed to approve project', 'error');
+                }
+            },
+
+            /**
+             * Pause a running project
+             */
+            async pauseProject(projectId) {
+                try {
+                    const res = await fetch(`/api/deep-work/projects/${projectId}/pause`, {
+                        method: 'POST'
+                    });
+
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (this.missionControl.selectedProject?.id === projectId) {
+                            this.missionControl.selectedProject = data.project;
+                        }
+                        const idx = this.missionControl.projects.findIndex(p => p.id === projectId);
+                        if (idx >= 0) {
+                            this.missionControl.projects[idx] = data.project;
+                        }
+                        this.showToast('Project paused', 'info');
+                    } else {
+                        const err = await res.json();
+                        this.showToast(err.detail || 'Failed to pause project', 'error');
+                    }
+                } catch (e) {
+                    console.error('Failed to pause project:', e);
+                    this.showToast('Failed to pause project', 'error');
+                }
+            },
+
+            /**
+             * Resume a paused project
+             */
+            async resumeProject(projectId) {
+                try {
+                    const res = await fetch(`/api/deep-work/projects/${projectId}/resume`, {
+                        method: 'POST'
+                    });
+
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (this.missionControl.selectedProject?.id === projectId) {
+                            this.missionControl.selectedProject = data.project;
+                        }
+                        const idx = this.missionControl.projects.findIndex(p => p.id === projectId);
+                        if (idx >= 0) {
+                            this.missionControl.projects[idx] = data.project;
+                        }
+                        this.showToast('Project resumed', 'success');
+                        await this.selectProject(data.project);
+                    } else {
+                        const err = await res.json();
+                        this.showToast(err.detail || 'Failed to resume project', 'error');
+                    }
+                } catch (e) {
+                    console.error('Failed to resume project:', e);
+                    this.showToast('Failed to resume project', 'error');
+                }
+            },
+
+            /**
+             * Delete a project
+             */
+            async deleteProject(projectId) {
+                if (!confirm('Delete this project and all its tasks?')) return;
+
+                try {
+                    const res = await fetch(`/api/mission-control/projects/${projectId}`, {
+                        method: 'DELETE'
+                    });
+
+                    if (res.ok) {
+                        this.missionControl.projects = this.missionControl.projects.filter(p => p.id !== projectId);
+                        if (this.missionControl.selectedProject?.id === projectId) {
+                            this.missionControl.selectedProject = null;
+                        }
+                        this.showToast('Project deleted', 'info');
+                    }
+                } catch (e) {
+                    console.error('Failed to delete project:', e);
+                    this.showToast('Failed to delete project', 'error');
+                }
+            },
+
+            // ==================== Deep Work Helpers ====================
+
+            /**
+             * Get CSS color class for project status
+             */
+            getProjectStatusColor(status) {
+                const colors = {
+                    'draft': 'bg-gray-500/20 text-gray-400',
+                    'planning': 'bg-blue-500/20 text-blue-400',
+                    'awaiting_approval': 'bg-amber-500/20 text-amber-400',
+                    'approved': 'bg-cyan-500/20 text-cyan-400',
+                    'executing': 'bg-green-500/20 text-green-400',
+                    'paused': 'bg-orange-500/20 text-orange-400',
+                    'completed': 'bg-emerald-500/20 text-emerald-400',
+                    'failed': 'bg-red-500/20 text-red-400'
+                };
+                return colors[status] || 'bg-white/10 text-white/50';
+            },
+
+            /**
+             * Get display label for project status
+             */
+            getProjectStatusLabel(status) {
+                const labels = {
+                    'draft': 'Draft',
+                    'planning': 'Planning...',
+                    'awaiting_approval': 'Awaiting Approval',
+                    'approved': 'Approved',
+                    'executing': 'Executing',
+                    'paused': 'Paused',
+                    'completed': 'Completed',
+                    'failed': 'Failed'
+                };
+                return labels[status] || status;
+            },
+
+            /**
+             * Get icon name for project status
+             */
+            getProjectStatusIcon(status) {
+                const icons = {
+                    'draft': 'file-edit',
+                    'planning': 'brain',
+                    'awaiting_approval': 'clock',
+                    'approved': 'check-circle',
+                    'executing': 'play-circle',
+                    'paused': 'pause-circle',
+                    'completed': 'check-circle-2',
+                    'failed': 'alert-circle'
+                };
+                return icons[status] || 'circle';
+            },
+
+            /**
+             * Get planning phase display info
+             */
+            getPlanningPhaseInfo() {
+                const phases = {
+                    'starting': { label: 'Initializing', icon: 'loader', step: 0 },
+                    'research': { label: 'Researching', icon: 'search', step: 1 },
+                    'prd': { label: 'Writing PRD', icon: 'file-text', step: 2 },
+                    'tasks': { label: 'Breaking Down Tasks', icon: 'list-checks', step: 3 },
+                    'team': { label: 'Assembling Team', icon: 'users', step: 4 }
+                };
+                return phases[this.missionControl.planningPhase] || { label: 'Working', icon: 'loader', step: 0 };
+            },
+
+            /**
+             * Get active project count
+             */
+            getActiveProjectCount() {
+                return this.missionControl.projects.filter(p =>
+                    ['planning', 'awaiting_approval', 'executing'].includes(p.status)
+                ).length;
+            },
+
+            // ==================== Enhanced Task Table Helpers ====================
+
+            /**
+             * Get tasks grouped by execution level for phase-based rendering.
+             * Returns array of {level, tasks} objects.
+             */
+            getTasksByLevel() {
+                const levels = this.missionControl.executionLevels;
+                const allTasks = this.missionControl.projectTasks;
+                if (!levels || levels.length === 0) {
+                    // Fallback: single group with all tasks
+                    return [{ level: 0, tasks: allTasks }];
+                }
+
+                const taskMap = {};
+                for (const t of allTasks) {
+                    taskMap[t.id] = t;
+                }
+
+                return levels.map((taskIds, idx) => ({
+                    level: idx,
+                    tasks: taskIds.map(id => taskMap[id]).filter(Boolean)
+                }));
+            },
+
+            /**
+             * Resolve blocked_by IDs to task titles for display.
+             */
+            getBlockerNames(task) {
+                if (!task.blocked_by || task.blocked_by.length === 0) return [];
+                return task.blocked_by.map(id => {
+                    const t = this.missionControl.projectTasks.find(pt => pt.id === id);
+                    return t ? t.title : id.substring(0, 8);
+                });
+            },
+
+            /**
+             * Resolve blocks IDs to task titles for display.
+             */
+            getBlocksNames(task) {
+                if (!task.blocks || task.blocks.length === 0) return [];
+                return task.blocks.map(id => {
+                    const t = this.missionControl.projectTasks.find(pt => pt.id === id);
+                    return t ? t.title : id.substring(0, 8);
+                });
+            },
+
+            /**
+             * Check if a task is ready to run (all blockers done or skipped).
+             */
+            isTaskReady(task) {
+                if (!task.blocked_by || task.blocked_by.length === 0) return true;
+                return task.blocked_by.every(id => {
+                    const dep = this.missionControl.projectTasks.find(t => t.id === id);
+                    return dep && (dep.status === 'done' || dep.status === 'skipped');
+                });
+            },
+
+            /**
+             * Toggle expand/collapse for a task row. Lazy-loads deliverables.
+             */
+            toggleTaskExpand(taskId) {
+                if (this.missionControl.expandedTaskId === taskId) {
+                    this.missionControl.expandedTaskId = null;
+                    return;
+                }
+                this.missionControl.expandedTaskId = taskId;
+
+                // Lazy load deliverables for completed tasks
+                const task = this.missionControl.projectTasks.find(t => t.id === taskId);
+                if (task && (task.status === 'done' || task.status === 'skipped') && !this.missionControl.taskDeliverableCache[taskId]) {
+                    this.loadTaskDeliverablesInline(taskId);
+                }
+
+                this.$nextTick(() => { if (window.refreshIcons) window.refreshIcons(); });
+            },
+
+            /**
+             * Fetch deliverables for inline preview (first 500 chars).
+             */
+            async loadTaskDeliverablesInline(taskId) {
+                try {
+                    const res = await fetch(`/api/mission-control/tasks/${taskId}/documents`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        this.missionControl.taskDeliverableCache[taskId] = data.documents || [];
+                    }
+                } catch (e) {
+                    console.error('Failed to load inline deliverables:', e);
+                    this.missionControl.taskDeliverableCache[taskId] = [];
+                }
+            },
+
+            /**
+             * Skip a project task — mark as skipped, unblock dependents.
+             */
+            async skipProjectTask(taskId) {
+                const project = this.missionControl.selectedProject;
+                if (!project) return;
+
+                try {
+                    const res = await fetch(`/api/deep-work/projects/${project.id}/tasks/${taskId}/skip`, {
+                        method: 'POST'
+                    });
+
+                    if (res.ok) {
+                        const data = await res.json();
+
+                        // Update local task state
+                        const task = this.missionControl.projectTasks.find(t => t.id === taskId);
+                        if (task) {
+                            task.status = 'skipped';
+                            task.completed_at = data.task.completed_at;
+                        }
+
+                        // Update progress
+                        if (data.progress) {
+                            this.missionControl.projectProgress = data.progress;
+                        }
+
+                        // Refresh the full project to see unblocked tasks
+                        await this.selectProject(project);
+
+                        this.showToast('Task skipped', 'info');
+                    } else {
+                        const err = await res.json();
+                        this.showToast(err.detail || 'Failed to skip task', 'error');
+                    }
+                } catch (e) {
+                    console.error('Failed to skip task:', e);
+                    this.showToast('Failed to skip task', 'error');
+                }
+            },
+
+            /**
+             * Get maximum estimated_minutes across all project tasks (for timeline bar scaling).
+             */
+            getMaxEstimatedMinutes() {
+                const tasks = this.missionControl.projectTasks;
+                if (!tasks || tasks.length === 0) return 30;
+                const max = Math.max(...tasks.map(t => t.estimated_minutes || 0));
+                return max || 30;
+            },
+
+            /**
+             * Get timeline bar color based on task status.
+             */
+            getTimelineBarColor(status) {
+                const colors = {
+                    'inbox': 'bg-blue-500/50',
+                    'assigned': 'bg-cyan-500/50',
+                    'in_progress': 'bg-amber-500/70',
+                    'review': 'bg-purple-500/50',
+                    'done': 'bg-green-500/60',
+                    'blocked': 'bg-red-500/40',
+                    'skipped': 'bg-gray-500/40'
+                };
+                return colors[status] || 'bg-white/15';
+            },
+
+            /**
+             * Get timeline status icon name.
+             */
+            getTimelineStatusIcon(status) {
+                const icons = {
+                    'inbox': 'circle',
+                    'assigned': 'user-check',
+                    'in_progress': 'loader',
+                    'review': 'eye',
+                    'done': 'check',
+                    'blocked': 'lock',
+                    'skipped': 'skip-forward'
+                };
+                return icons[status] || 'circle';
+            },
+
+            /**
+             * Handle Deep Work WebSocket events
+             */
+            handleDWEvent(data) {
+                const eventType = data.event_type;
+                const eventData = data.data || {};
+
+                if (eventType === 'dw_planning_phase') {
+                    const projectId = eventData.project_id;
+                    const phase = eventData.phase;
+                    const message = eventData.message;
+
+                    // Update planning progress
+                    if (this.missionControl.planningProjectId === projectId) {
+                        this.missionControl.planningPhase = phase;
+                        this.missionControl.planningMessage = message;
+                    }
+
+                    this.log(`[Deep Work] ${message}`, 'info');
                 }
             }
         };
