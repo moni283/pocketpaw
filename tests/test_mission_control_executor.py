@@ -403,7 +403,7 @@ class TestMCTaskExecutor:
     @pytest.mark.asyncio
     async def test_build_task_prompt(self, executor, agent, task):
         """Test prompt building includes task and agent context."""
-        prompt = executor._build_task_prompt(task, agent)
+        prompt = await executor._build_task_prompt(task, agent)
 
         assert "TestAgent" in prompt
         assert "Test Role" in prompt
@@ -464,7 +464,8 @@ class TestSecurityFeatures:
 class TestPromptBuilding:
     """Tests for task prompt construction."""
 
-    def test_prompt_includes_agent_info(self):
+    @pytest.mark.asyncio
+    async def test_prompt_includes_agent_info(self):
         """Test prompt includes agent name, role, description."""
         executor = MCTaskExecutor()
         agent = AgentProfile(
@@ -475,7 +476,7 @@ class TestPromptBuilding:
         )
         task = Task(title="Test", description="Test task", priority=TaskPriority.HIGH)
 
-        prompt = executor._build_task_prompt(task, agent)
+        prompt = await executor._build_task_prompt(task, agent)
 
         assert "Jarvis" in prompt
         assert "Squad Lead" in prompt
@@ -483,7 +484,8 @@ class TestPromptBuilding:
         assert "planning" in prompt
         assert "coordination" in prompt
 
-    def test_prompt_includes_task_info(self):
+    @pytest.mark.asyncio
+    async def test_prompt_includes_task_info(self):
         """Test prompt includes task title, description, priority."""
         executor = MCTaskExecutor()
         agent = AgentProfile(name="Agent", role="Role")
@@ -493,19 +495,20 @@ class TestPromptBuilding:
             priority=TaskPriority.URGENT,
         )
 
-        prompt = executor._build_task_prompt(task, agent)
+        prompt = await executor._build_task_prompt(task, agent)
 
         assert "Research competitors" in prompt
         assert "Full competitive analysis" in prompt
         assert "urgent" in prompt.lower()
 
-    def test_prompt_handles_missing_description(self):
+    @pytest.mark.asyncio
+    async def test_prompt_handles_missing_description(self):
         """Test prompt handles agent/task with no description."""
         executor = MCTaskExecutor()
         agent = AgentProfile(name="Agent", role="Role")
         task = Task(title="Task", priority=TaskPriority.LOW)
 
-        prompt = executor._build_task_prompt(task, agent)
+        prompt = await executor._build_task_prompt(task, agent)
 
         # Should not crash and should still have basic info
         assert "Agent" in prompt

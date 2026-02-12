@@ -77,6 +77,11 @@ class MCTaskExecutor:
         self._running_tasks: dict[str, asyncio.Task] = {}
         self._agent_routers: dict[str, AgentRouter] = {}
         self._stop_flags: dict[str, bool] = {}
+        self._background_launched: set[str] = set()
+        # Callback for direct scheduler integration (avoids MessageBus dependency
+        # on the critical task-completion → cascade-dispatch path).
+        # Set by DeepWorkSession.
+        self._on_task_done_callback = None
 
     async def execute_task(
         self,
@@ -112,15 +117,20 @@ class MCTaskExecutor:
             logger.warning(f"Security: Invalid agent_id format: {agent_id[:50]}")
             return {"status": "error", "error": "Invalid agent ID format"}
 
-        # Security: Rate limit - check concurrent task count
+        # Security: Rate limit - check concurrent task count.
+        # Note: execute_task_background also checks before registering to
+        # prevent the race where all tasks register first, then all fail.
         if len(self._running_tasks) >= MAX_CONCURRENT_TASKS:
             logger.warning(
                 f"Security: Max concurrent tasks ({MAX_CONCURRENT_TASKS}) reached. "
                 f"Rejecting task {task_id}"
             )
+            # Clean up leaked _running_tasks entry (if added by execute_task_background)
+            self._running_tasks.pop(task_id, None)
+            self._background_launched.discard(task_id)
             return {
                 "status": "error",
-                "error": f"Maximum concurrent tasks ({MAX_CONCURRENT_TASKS}) reached. Please wait.",
+                "error": f"Maximum concurrent tasks ({MAX_CONCURRENT_TASKS}) reached.",
             }
 
         manager = get_mission_control_manager()
@@ -133,6 +143,11 @@ class MCTaskExecutor:
         agent = await manager.get_agent(agent_id)
         if not agent:
             return {"status": "error", "error": "Agent not found"}
+
+        # Check if task is already running (skip if we launched it via background)
+        if task_id in self._running_tasks and task_id not in self._background_launched:
+            return {"status": "error", "error": "Task is already running"}
+        self._background_launched.discard(task_id)
 
         # Security: Log task execution start
         logger.info(
@@ -181,7 +196,7 @@ class MCTaskExecutor:
         )
 
         # Log activity
-        activity = await self._log_activity(
+        await self._log_activity(
             ActivityType.TASK_UPDATED,
             agent_id=agent_id,
             task_id=task_id,
@@ -189,7 +204,7 @@ class MCTaskExecutor:
         )
 
         # Build the prompt for the agent
-        prompt = self._build_task_prompt(task, agent)
+        prompt = await self._build_task_prompt(task, agent)
 
         # Execute and collect output
         output_chunks: list[str] = []
@@ -314,6 +329,16 @@ class MCTaskExecutor:
                     message=f"Execution stopped for '{task.title}'",
                 )
 
+            # Direct scheduler callback — bypasses MessageBus for reliable
+            # cascade dispatch (unblock dependents, check project completion).
+            # Fires for ALL statuses (completed, stopped, error) so deferred
+            # tasks at the same level get re-dispatched when capacity frees up.
+            if self._on_task_done_callback:
+                try:
+                    await self._on_task_done_callback(task_id)
+                except Exception as e:
+                    logger.warning(f"Scheduler callback failed for task {task_id}: {e}")
+
         full_output = "".join(output_chunks)
         return {
             "status": final_status,
@@ -325,7 +350,7 @@ class MCTaskExecutor:
         self,
         task_id: str,
         agent_id: str,
-    ) -> None:
+    ) -> bool:
         """Start task execution in the background.
 
         Returns immediately. Task runs in a background asyncio task.
@@ -339,20 +364,31 @@ class MCTaskExecutor:
         Args:
             task_id: ID of the task to execute
             agent_id: ID of the agent to run
+
+        Returns:
+            True if task was launched, False if rejected (capacity full).
         """
+        # Check capacity BEFORE registering to prevent the race condition
+        # where N tasks all register, then all N see len >= limit and reject.
+        if len(self._running_tasks) >= MAX_CONCURRENT_TASKS:
+            logger.info(
+                f"Deferring task {task_id}: at capacity "
+                f"({len(self._running_tasks)}/{MAX_CONCURRENT_TASKS})"
+            )
+            return False
+
+        # Guard against double-dispatch
         if task_id in self._running_tasks:
             logger.warning(f"Task {task_id} is already running, skipping duplicate dispatch")
-            return
+            return False
 
-        async def _run_and_cleanup():
-            try:
-                return await self.execute_task(task_id, agent_id)
-            finally:
-                # Guarantee cleanup even if execute_task returns early
-                self._running_tasks.pop(task_id, None)
-
-        async_task = asyncio.create_task(_run_and_cleanup())
+        # Mark as pending so execute_task knows it was launched via background
+        # (avoids race where execute_task sees task_id in _running_tasks
+        # because we registered it before the coroutine started)
+        self._background_launched.add(task_id)
+        async_task = asyncio.create_task(self.execute_task(task_id, agent_id))
         self._running_tasks[task_id] = async_task
+        return True
 
     async def stop_task(self, task_id: str) -> bool:
         """Stop a running task.
@@ -461,11 +497,14 @@ class MCTaskExecutor:
 
         return sanitized
 
-    def _build_task_prompt(self, task, agent) -> str:
+    async def _build_task_prompt(self, task, agent) -> str:
         """Build the prompt to send to the agent.
 
-        Includes task context and agent instructions.
+        Includes agent identity, task details, project context (PRD summary,
+        upstream deliverables), and project working directory.
         """
+        manager = get_mission_control_manager()
+
         prompt_parts = [
             f"You are {agent.name}, a {agent.role}.",
         ]
@@ -475,6 +514,64 @@ class MCTaskExecutor:
 
         if agent.specialties:
             prompt_parts.append(f"Specialties: {', '.join(agent.specialties)}")
+
+        # Project context: PRD and working directory
+        if task.project_id:
+            project = await manager.get_project(task.project_id)
+            if project:
+                from pocketclaw.mission_control.manager import get_project_dir
+
+                project_dir = get_project_dir(project.id)
+                prompt_parts.extend(
+                    [
+                        "",
+                        "## Project Context",
+                        f"**Project:** {project.title}",
+                        f"**Working Directory:** {project_dir}",
+                    ]
+                )
+
+                # Include PRD summary (first 2000 chars)
+                if project.prd_document_id:
+                    prd_doc = await manager.get_document(project.prd_document_id)
+                    if prd_doc and prd_doc.content:
+                        prd_summary = prd_doc.content[:2000]
+                        if len(prd_doc.content) > 2000:
+                            prd_summary += "\n... (truncated)"
+                        prompt_parts.extend(
+                            [
+                                "",
+                                "### Requirements (PRD)",
+                                prd_summary,
+                            ]
+                        )
+
+            # Include deliverables from upstream (completed dependency) tasks
+            if task.blocked_by:
+                upstream_outputs = []
+                for dep_id in task.blocked_by:
+                    dep_task = await manager.get_task(dep_id)
+                    if dep_task and dep_task.status in (TaskStatus.DONE,):
+                        # Find deliverable document for this task
+                        docs = await manager.get_task_documents(dep_id)
+                        for doc in docs:
+                            if doc.content:
+                                snippet = doc.content[:1000]
+                                if len(doc.content) > 1000:
+                                    snippet += "\n... (truncated)"
+                                upstream_outputs.append(f"**{dep_task.title}:**\n{snippet}")
+
+                if upstream_outputs:
+                    prompt_parts.extend(
+                        [
+                            "",
+                            "### Upstream Task Outputs",
+                            "The following tasks have been completed before yours. "
+                            "Use their output as context:",
+                            "",
+                        ]
+                    )
+                    prompt_parts.extend(upstream_outputs)
 
         prompt_parts.extend(
             [
@@ -544,7 +641,7 @@ class MCTaskExecutor:
             task_id=task_id,
             message=message,
         )
-        await manager._store.save_activity(activity)
+        await manager.save_activity(activity)
 
         # Broadcast activity created event
         await self._broadcast_event(
@@ -591,7 +688,7 @@ class MCTaskExecutor:
             tags=["auto-generated", "task-output"],
         )
 
-        await manager._store.save_document(document)
+        await manager.save_document(document)
 
         logger.info(
             f"Saved task deliverable: doc_id={document.id}, task_id={task_id}, length={len(output)}"
