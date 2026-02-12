@@ -1,7 +1,8 @@
 """Mission Control manager.
 
 Created: 2026-02-05
-Updated: 2026-02-12 — Added project CRUD methods for Deep Work orchestration:
+Updated: 2026-02-12 — Added skipped count to get_project_progress(), include
+  skipped in percent numerator. Added project CRUD methods for Deep Work:
   - create_project, get_project, list_projects
   - get_project_tasks, get_project_progress
   - update_project, delete_project
@@ -612,21 +613,27 @@ class MissionControlManager:
             project_id: Project to get progress for
 
         Returns:
-            Dict with total, completed, in_progress, blocked, human_pending, percent
+            Dict with total, completed, skipped, in_progress, blocked, human_pending, percent
         """
         tasks = await self.get_project_tasks(project_id)
         total = len(tasks)
         completed = len([t for t in tasks if t.status == TaskStatus.DONE])
+        skipped = len([t for t in tasks if t.status == TaskStatus.SKIPPED])
         in_progress = len([t for t in tasks if t.status == TaskStatus.IN_PROGRESS])
         blocked = len([t for t in tasks if t.status == TaskStatus.BLOCKED])
         human_pending = len(
-            [t for t in tasks if t.task_type == "human" and t.status != TaskStatus.DONE]
+            [
+                t
+                for t in tasks
+                if t.task_type == "human" and t.status not in (TaskStatus.DONE, TaskStatus.SKIPPED)
+            ]
         )
-        percent = (completed / total * 100) if total > 0 else 0.0
+        percent = ((completed + skipped) / total * 100) if total > 0 else 0.0
 
         return {
             "total": total,
             "completed": completed,
+            "skipped": skipped,
             "in_progress": in_progress,
             "blocked": blocked,
             "human_pending": human_pending,

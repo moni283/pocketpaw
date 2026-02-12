@@ -1,9 +1,10 @@
 # Deep Work Dependency Scheduler
 # Created: 2026-02-12
-# Watches task completions and auto-dispatches ready tasks in dependency order.
+# Updated: 2026-02-12 — Treat SKIPPED status same as DONE for blocker resolution
+#   and project completion checks.
 #
 # Key features:
-# - get_ready_tasks: finds tasks with all blockers satisfied
+# - get_ready_tasks: finds tasks with all blockers satisfied (DONE or SKIPPED)
 # - on_task_completed: auto-dispatches newly unblocked tasks
 # - validate_graph: cycle detection via Kahn's algorithm (works with Task and TaskSpec)
 # - get_execution_order: groups tasks by dependency level (works with Task and TaskSpec)
@@ -54,7 +55,7 @@ class DependencyScheduler:
 
         A task is "ready" when:
         - Its status is INBOX or ASSIGNED (not yet started)
-        - All task IDs in its blocked_by list have status DONE
+        - All task IDs in its blocked_by list have status DONE or SKIPPED
 
         Args:
             project_id: Project to check
@@ -64,13 +65,15 @@ class DependencyScheduler:
         """
         all_tasks = await self.manager.list_tasks()
         project_tasks = [t for t in all_tasks if t.project_id == project_id]
-        done_ids = {t.id for t in project_tasks if t.status == TaskStatus.DONE}
+        resolved_ids = {
+            t.id for t in project_tasks if t.status in (TaskStatus.DONE, TaskStatus.SKIPPED)
+        }
 
         ready = []
         for task in project_tasks:
             if task.status not in (TaskStatus.INBOX, TaskStatus.ASSIGNED):
                 continue
-            if not task.blocked_by or all(bid in done_ids for bid in task.blocked_by):
+            if not task.blocked_by or all(bid in resolved_ids for bid in task.blocked_by):
                 ready.append(task)
         return ready
 
@@ -134,7 +137,7 @@ class DependencyScheduler:
         if not project_tasks:
             return False
 
-        all_done = all(t.status == TaskStatus.DONE for t in project_tasks)
+        all_done = all(t.status in (TaskStatus.DONE, TaskStatus.SKIPPED) for t in project_tasks)
         if all_done:
             project = await self.manager.get_project(project_id)
             if project:

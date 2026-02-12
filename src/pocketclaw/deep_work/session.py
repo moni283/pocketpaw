@@ -3,6 +3,7 @@
 # Updated: 2026-02-12 — Added executor integration for pause/stop, made
 #   planner/scheduler/human_router optional with sensible defaults,
 #   improved _assign_tasks_to_agents to use key_to_id mapping.
+#   Added research_depth parameter to start() for controlling planner depth.
 #
 # Ties together the Planner, DependencyScheduler, MCTaskExecutor, and
 # HumanTaskRouter into a single class that manages a Deep Work project
@@ -83,7 +84,7 @@ class DeepWorkSession:
     # Public lifecycle methods
     # =========================================================================
 
-    async def start(self, user_input: str) -> Project:
+    async def start(self, user_input: str, research_depth: str = "standard") -> Project:
         """Create a project, run the planner, and prepare for approval.
 
         Flow:
@@ -99,6 +100,8 @@ class DeepWorkSession:
 
         Args:
             user_input: Natural language project description.
+            research_depth: How thorough to research — "quick", "standard",
+                or "deep".
 
         Returns:
             The created Project (status=AWAITING_APPROVAL on success,
@@ -116,7 +119,9 @@ class DeepWorkSession:
             project.status = ProjectStatus.PLANNING
             await self.manager.update_project(project)
 
-            result = await self.planner.plan(user_input, project_id=project.id)
+            result = await self.planner.plan(
+                user_input, project_id=project.id, research_depth=research_depth
+            )
 
             # Set project title from PRD (first heading or fallback)
             title = _extract_title(result.prd_content) or user_input[:80]

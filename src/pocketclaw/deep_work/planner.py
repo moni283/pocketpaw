@@ -1,5 +1,7 @@
 # Deep Work Planner — orchestrates 4-phase project planning via LLM.
 # Created: 2026-02-12
+# Updated: 2026-02-12 — Added research_depth parameter (quick/standard/deep)
+#   to control how thorough the research phase is.
 #
 # PlannerAgent runs research, PRD generation, task breakdown, and team
 # assembly through AgentRouter, producing a PlannerResult that can be
@@ -13,6 +15,8 @@ from pocketclaw.deep_work.models import AgentSpec, PlannerResult, TaskSpec
 from pocketclaw.deep_work.prompts import (
     PRD_PROMPT,
     RESEARCH_PROMPT,
+    RESEARCH_PROMPT_DEEP,
+    RESEARCH_PROMPT_QUICK,
     TASK_BREAKDOWN_PROMPT,
     TEAM_ASSEMBLY_PROMPT,
 )
@@ -57,16 +61,34 @@ class PlannerAgent:
             backend="claude_agent_sdk",
         )
 
-    async def plan(self, project_description: str, project_id: str = "") -> PlannerResult:
+    async def plan(
+        self,
+        project_description: str,
+        project_id: str = "",
+        research_depth: str = "standard",
+    ) -> PlannerResult:
         """Run all 4 planning phases and return a structured PlannerResult.
+
+        Args:
+            project_description: Natural language project description.
+            project_id: ID of the project being planned.
+            research_depth: How thorough to research — "quick", "standard",
+                or "deep". Quick skips heavy web search, deep does extensive
+                web search and analysis.
 
         Broadcasts SystemEvents for each phase so the frontend can show
         progress (e.g. spinner text).
         """
-        # Phase 1: Research
+        # Phase 1: Research (depth controls prompt and thoroughness)
         self._broadcast_phase(project_id, "research")
+        research_prompts = {
+            "quick": RESEARCH_PROMPT_QUICK,
+            "standard": RESEARCH_PROMPT,
+            "deep": RESEARCH_PROMPT_DEEP,
+        }
+        prompt_template = research_prompts.get(research_depth, RESEARCH_PROMPT)
         research = await self._run_prompt(
-            RESEARCH_PROMPT.format(project_description=project_description)
+            prompt_template.format(project_description=project_description)
         )
 
         # Phase 2: PRD

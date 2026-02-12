@@ -1,11 +1,30 @@
 # Deep Work planner prompt templates.
 # Created: 2026-02-12
+# Updated: 2026-02-12 — Added RESEARCH_PROMPT_QUICK and RESEARCH_PROMPT_DEEP
+#   for configurable research depth.
 #
 # Four-phase planning prompts:
-#   RESEARCH_PROMPT — domain research
+#   RESEARCH_PROMPT — domain research (standard depth)
+#   RESEARCH_PROMPT_QUICK — minimal research (skip web search)
+#   RESEARCH_PROMPT_DEEP — thorough research (extensive web search)
 #   PRD_PROMPT — PRD generation
 #   TASK_BREAKDOWN_PROMPT — task decomposition to JSON
 #   TEAM_ASSEMBLY_PROMPT — team recommendation to JSON
+
+RESEARCH_PROMPT_QUICK = """\
+You are a senior technical researcher. Based ONLY on your existing knowledge \
+(no web searches needed), provide brief research notes for the project below.
+
+PROJECT DESCRIPTION:
+{project_description}
+
+OUTPUT FORMAT — plain text with these sections:
+1. Domain Overview (1-2 sentences)
+2. Key Technical Considerations (3-5 bullets)
+3. Recommended Approach (1 paragraph)
+
+Keep your response under 150 words. Be concise.
+"""
 
 RESEARCH_PROMPT = """\
 You are a senior technical researcher. Your job is to research the domain \
@@ -23,6 +42,26 @@ OUTPUT FORMAT — plain text with these sections:
 5. Recommended Approach (1 paragraph)
 
 Keep your response under 400 words. Be specific and actionable.
+"""
+
+RESEARCH_PROMPT_DEEP = """\
+You are a senior technical researcher. Your job is to do thorough research on \
+the domain described below. Use web search extensively to find current best \
+practices, existing solutions, and technical details. Produce comprehensive \
+research notes that will inform a detailed PRD and task breakdown.
+
+PROJECT DESCRIPTION:
+{project_description}
+
+OUTPUT FORMAT — plain text with these sections:
+1. Domain Overview (3-5 sentences with current state of the art)
+2. Key Technical Considerations (detailed bullet list)
+3. Risks & Unknowns (bullet list with mitigation suggestions)
+4. Comparable Solutions / Prior Art (detailed bullet list with links if found)
+5. Architecture Patterns (bullet list of relevant patterns and frameworks)
+6. Recommended Approach (2-3 paragraphs with justification)
+
+Be thorough and specific. Include technical details and concrete recommendations.
 """
 
 PRD_PROMPT = """\

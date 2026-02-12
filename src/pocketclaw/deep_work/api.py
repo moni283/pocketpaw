@@ -1,13 +1,16 @@
 # Deep Work API endpoints.
 # Created: 2026-02-12
-# Updated: 2026-02-12 — Added success key, tightened description validation.
+# Updated: 2026-02-12 — Added execution_levels + task_level_map to get_plan().
+#   Added POST /projects/{id}/tasks/{task_id}/skip endpoint for skipping tasks.
+#   Added research_depth parameter to start endpoint.
 #
 # FastAPI router for Deep Work orchestration:
-#   POST /start                     — submit project (natural language)
-#   GET  /projects/{id}/plan        — get generated plan for review
-#   POST /projects/{id}/approve     — approve plan, start execution
-#   POST /projects/{id}/pause       — pause execution
-#   POST /projects/{id}/resume      — resume execution
+#   POST /start                               — submit project (natural language)
+#   GET  /projects/{id}/plan                  — get plan with execution_levels
+#   POST /projects/{id}/approve               — approve plan, start execution
+#   POST /projects/{id}/pause                 — pause execution
+#   POST /projects/{id}/resume                — resume execution
+#   POST /projects/{id}/tasks/{tid}/skip      — skip a task
 #
 # Mount: app.include_router(deep_work_router, prefix="/api/deep-work")
 
@@ -28,6 +31,10 @@ class StartDeepWorkRequest(BaseModel):
     description: str = Field(
         ..., min_length=10, max_length=5000, description="Natural language project description"
     )
+    research_depth: str = Field(
+        default="standard",
+        description="Research thoroughness: 'quick' (skip heavy search), 'standard', or 'deep' (extensive search)",
+    )
 
 
 @router.post("/start")
@@ -40,7 +47,7 @@ async def start_deep_work(request: StartDeepWorkRequest) -> dict[str, Any]:
     from pocketclaw.deep_work import start_deep_work as _start
 
     try:
-        project = await _start(request.description)
+        project = await _start(request.description, research_depth=request.research_depth)
         return {"success": True, "project": project.to_dict()}
     except Exception as e:
         logger.exception(f"Deep Work start failed: {e}")
@@ -51,8 +58,10 @@ async def start_deep_work(request: StartDeepWorkRequest) -> dict[str, Any]:
 async def get_plan(project_id: str) -> dict[str, Any]:
     """Get the generated plan for a project.
 
-    Returns project details, tasks, progress, and the PRD document.
+    Returns project details, tasks, progress, PRD document, and execution_levels
+    (task IDs grouped by dependency level for parallel execution).
     """
+    from pocketclaw.deep_work.scheduler import DependencyScheduler
     from pocketclaw.mission_control.manager import get_mission_control_manager
 
     manager = get_mission_control_manager()
@@ -62,6 +71,13 @@ async def get_plan(project_id: str) -> dict[str, Any]:
 
     tasks = await manager.get_project_tasks(project_id)
     progress = await manager.get_project_progress(project_id)
+
+    # Compute execution levels from dependency graph
+    execution_levels = DependencyScheduler.get_execution_order(tasks)
+    task_level_map = {}
+    for level_idx, level_ids in enumerate(execution_levels):
+        for tid in level_ids:
+            task_level_map[tid] = level_idx
 
     # Get PRD document if available
     prd = None
@@ -75,6 +91,8 @@ async def get_plan(project_id: str) -> dict[str, Any]:
         "tasks": [t.to_dict() for t in tasks],
         "progress": progress,
         "prd": prd,
+        "execution_levels": execution_levels,
+        "task_level_map": task_level_map,
     }
 
 
@@ -121,3 +139,49 @@ async def resume_project(project_id: str) -> dict[str, Any]:
     except Exception as e:
         logger.exception(f"Resume failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/projects/{project_id}/tasks/{task_id}/skip")
+async def skip_task(project_id: str, task_id: str) -> dict[str, Any]:
+    """Skip a task without running it, unblocking dependents.
+
+    Sets task status to SKIPPED with completed_at timestamp, then
+    cascades unblocking via the scheduler.
+    """
+    from pocketclaw.deep_work import get_deep_work_session
+    from pocketclaw.mission_control.manager import get_mission_control_manager
+    from pocketclaw.mission_control.models import TaskStatus, now_iso
+
+    manager = get_mission_control_manager()
+
+    task = await manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.project_id != project_id:
+        raise HTTPException(status_code=400, detail="Task does not belong to this project")
+    if task.status in (TaskStatus.DONE, TaskStatus.SKIPPED, TaskStatus.IN_PROGRESS):
+        raise HTTPException(
+            status_code=400, detail=f"Cannot skip task with status '{task.status.value}'"
+        )
+
+    # Set SKIPPED status
+    task.status = TaskStatus.SKIPPED
+    task.completed_at = now_iso()
+    task.updated_at = now_iso()
+    await manager._store.save_task(task)
+
+    # Cascade: unblock dependents and check project completion
+    try:
+        session = get_deep_work_session()
+        await session.scheduler.on_task_completed(task_id)
+    except Exception as e:
+        logger.warning(f"Scheduler cascade after skip failed: {e}")
+
+    # Return updated task and progress
+    progress = await manager.get_project_progress(project_id)
+
+    return {
+        "success": True,
+        "task": task.to_dict(),
+        "progress": progress,
+    }

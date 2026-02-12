@@ -1,6 +1,7 @@
 # Deep Work — AI project orchestration layer for PocketPaw.
 # Created: 2026-02-12
 # Updated: 2026-02-12 — Added executor integration, public API functions.
+#   Added research_depth parameter to start_deep_work().
 #
 # Provides a singleton DeepWorkSession and convenience functions for
 # starting and managing Deep Work projects.
@@ -73,17 +74,18 @@ def reset_deep_work_session() -> None:
     _session_instance = None
 
 
-async def start_deep_work(user_input: str) -> Project:
+async def start_deep_work(user_input: str, research_depth: str = "standard") -> Project:
     """Submit a new project for Deep Work planning.
 
     Args:
         user_input: Natural language project description.
+        research_depth: How thorough to research — "quick", "standard", or "deep".
 
     Returns:
         The created Project (status=AWAITING_APPROVAL after planning).
     """
     session = get_deep_work_session()
-    return await session.start(user_input)
+    return await session.start(user_input, research_depth=research_depth)
 
 
 async def approve_project(project_id: str) -> Project:
