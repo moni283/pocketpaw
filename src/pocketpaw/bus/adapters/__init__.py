@@ -7,6 +7,7 @@ import importlib
 import logging
 import shutil
 import subprocess
+import sys
 from abc import ABC, abstractmethod
 from typing import Protocol
 
@@ -15,22 +16,12 @@ from pocketpaw.bus.queue import MessageBus
 
 _log = logging.getLogger(__name__)
 
-# Maps a pip extra name → the actual pip package(s) to install.
-# We install underlying packages directly instead of pocketpaw[extra] so
-# that auto-install works correctly for both source and packaged installs.
-_EXTRA_PACKAGES: dict[str, str] = {
-    "discord": "discord.py>=2.3.0",
-    "slack": "slack-bolt>=1.20.0",
-    "telegram": "python-telegram-bot>=21.0",
-    "whatsapp-personal": "neonize>=0.3.0",
-    "matrix": "matrix-nio>=0.24.0",
-    "teams": "botbuilder-core>=4.16.0 botbuilder-integration-aiohttp>=4.16.0",
-    "gchat": "google-api-python-client>=2.100.0 google-auth>=2.25.0",
-}
-
 
 def auto_install(extra: str, verify_import: str) -> None:
     """Auto-install an optional dependency if it is missing.
+
+    Uses ``pocketpaw[<extra>]`` so version constraints stay in pyproject.toml
+    (single source of truth).
 
     Args:
         extra: The pocketpaw extra name (e.g. "discord").
@@ -39,26 +30,22 @@ def auto_install(extra: str, verify_import: str) -> None:
     Raises:
         RuntimeError: If the install fails or the module still can't be imported.
     """
-    pip_spec = _EXTRA_PACKAGES.get(extra, f"pocketpaw[{extra}]")
-    # Split space-separated specs into individual packages for subprocess
-    packages = pip_spec.split()
+    pip_spec = f"pocketpaw[{extra}]"
     _log.info("Auto-installing missing dependency: %s", pip_spec)
 
     # Prefer uv (fast), fall back to pip
-    import sys
-
     in_venv = hasattr(sys, "real_prefix") or sys.prefix != sys.base_prefix
     uv = shutil.which("uv")
     if uv:
         cmd = [uv, "pip", "install"]
         if not in_venv:
             cmd.append("--system")
-        cmd.extend(packages)
+        cmd.append(pip_spec)
     else:
         cmd = ["pip", "install"]
         if not in_venv:
             cmd.append("--user")
-        cmd.extend(packages)
+        cmd.append(pip_spec)
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
@@ -75,8 +62,6 @@ def auto_install(extra: str, verify_import: str) -> None:
 
     # Remove stale sys.modules entries for the target module and its parent
     # so importlib.import_module() performs a fresh import.
-    import sys
-
     for key in list(sys.modules):
         if key == verify_import or key.startswith(verify_import + "."):
             del sys.modules[key]
