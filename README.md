@@ -77,7 +77,13 @@ pip install pocketpaw
 # 5. Run PocketPaw
 pocketpaw
 ```
-
+> 💡 If the `pocketpaw` command is not recognized, you can run:
+>
+ ```bash
+ python -m pocketpaw
+ ```
+>
+> This works even if your PATH is not configured.
 **Or use the automated install script:**
 
 ```bash
