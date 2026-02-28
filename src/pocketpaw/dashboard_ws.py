@@ -444,16 +444,36 @@ async def websocket_handler(
 
             # Handle API key save
             elif action == "save_api_key":
+                from pocketpaw.config import validate_api_key
+
                 provider = data.get("provider")
                 key = data.get("key", "")
 
-                def _api_key_response(content: str):
-                    key_warnings = validate_api_keys(settings)
-                    return {
-                        "type": "settings_saved",
-                        "content": content,
-                        "warnings": key_warnings,
-                    }
+                # Map provider names to field names for validation.
+                # Note: Some providers (google, tavily, brave, parallel, elevenlabs) don't
+                # have format validation patterns in _API_KEY_PATTERNS yet and will pass through.
+                # Patterns can be added in config.py as needed.
+                provider_to_field = {
+                    "anthropic": "anthropic_api_key",
+                    "openai": "openai_api_key",
+                    "google": "google_api_key",
+                    "tavily": "tavily_api_key",
+                    "brave": "brave_api_key",
+                    "parallel": "parallel_api_key",
+                    "elevenlabs": "elevenlabs_api_key",
+                    "openai_compatible": "openai_compatible_api_key",
+                }
+
+                field_name = provider_to_field.get(provider)
+
+                # Validate key format if validation rule exists
+                if field_name and key:
+                    is_valid, warning = validate_api_key(field_name, key)
+                    if not is_valid:
+                        await websocket.send_json(
+                            {"type": "error", "content": f"\u26a0\ufe0f {warning}"}
+                        )
+                        return
 
                 async with _settings_lock:
                     if provider == "anthropic" and key:
