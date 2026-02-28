@@ -167,6 +167,11 @@ Alternatively, you can run PocketPaw using:
 ```powershell
 python -m pocketpaw
 ```
+> ⚠️ If you installed using `uv`, the executable may be located at:
+>
+> C:\Users\<your-username>\.uv\bin
+>
+> Make sure this folder is added to your PATH.
 
 <details>
 <summary>Other methods</summary>
